@@ -23,14 +23,13 @@ Recommended workflow:
    - Use `保存当前底图配置` / `加载底图配置` to manage multiple reference canvases under `artifacts/references/`.
 2. Use `2 字迹定位` to import answer images, crop/rotate/scale/move them over the reference background, then export `artifacts/handwriting_merged.png`.
    - Click an image on the canvas to select its layer.
-   - Switch `画布操作模式` between `选择`, `平移`, `裁切`, `旋转`, `缩放`, and `橡皮擦`.
-   - In move mode, drag inside the selected image.
-   - In rotate mode, drag the rotate handle above the selected frame.
-   - In scale mode, drag the lower-right frame corner.
-   - In crop mode, drag any frame corner.
-   - In eraser mode, adjust `橡皮擦半径 px`, then drag on the selected layer to erase to transparent.
+   - Right-drag inside the selected frame to move the layer.
+   - Left-drag inside the selected frame to erase with the current `橡皮擦半径 px`.
+   - Left-drag the round handle above the frame to rotate.
+   - Left-drag the blue square handle at the lower-right to scale; scaling is anchored at the upper-left.
+   - Left-drag any red frame corner to crop.
    - Eraser output is saved as an already-extracted transparent layer, so later previews do not repeatedly thicken the same handwriting.
-   - During mouse dragging, the operation frame updates immediately; after mouse release, the real image preview refreshes and left-side values stay synchronized.
+   - During mouse dragging, the operation frame updates immediately; after mouse release, the real image preview refreshes and left-side values stay synchronized. The left control panel scrolls vertically when controls overflow.
 3. Use `3 轨迹生成` to skeletonize the transparent handwriting image and save `artifacts/strokes.json`. The skeleton parameters are persisted in `artifacts/project.json`. Enable `执行时使用对角原点/XY反向` if the machine should first move to the opposite corner and then write with mirrored X/Y coordinates.
 4. Optional: use `4 文本转字迹` to generate a Handright-style handwriting image, then add it back into module 2 for positioning.
    - Each generated image uses a timestamped filename like `handright_output_YYYYMMDD_HHMMSS_xxx.png`, so previous outputs are not overwritten.

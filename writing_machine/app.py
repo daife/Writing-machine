@@ -137,8 +137,23 @@ class WritingMachineApp:
     def _build_layers_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="2 字迹定位")
-        left = ttk.Frame(tab)
-        left.pack(side="left", fill="y", padx=8, pady=8)
+        left_outer = ttk.Frame(tab)
+        left_outer.pack(side="left", fill="y", padx=8, pady=8)
+        left_canvas = tk.Canvas(left_outer, width=260, highlightthickness=0)
+        left_scrollbar = ttk.Scrollbar(left_outer, orient="vertical", command=left_canvas.yview)
+        left = ttk.Frame(left_canvas)
+        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
+        left_canvas.configure(yscrollcommand=left_scrollbar.set)
+        left_canvas.pack(side="left", fill="y", expand=False)
+        left_scrollbar.pack(side="right", fill="y")
+
+        def update_left_scroll(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            left_canvas.itemconfigure(left_window, width=left_canvas.winfo_width())
+
+        left.bind("<Configure>", update_left_scroll)
+        left_canvas.bind("<Configure>", update_left_scroll)
+        left_canvas.bind_all("<MouseWheel>", lambda event: left_canvas.yview_scroll(int(-event.delta / 120), "units"))
         right = ttk.Frame(tab)
         right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
@@ -150,19 +165,19 @@ class WritingMachineApp:
         self.layer_list = tk.Listbox(left, height=7, exportselection=False)
         self.layer_list.pack(fill="x", pady=4)
         self.layer_list.bind("<<ListboxSelect>>", lambda _event: self.load_layer_to_controls())
-        ttk.Label(left, text="画布操作模式").pack(anchor="w", pady=(8, 0))
-        self.layer_mode_var = tk.StringVar(value="select")
-        mode_frame = ttk.Frame(left)
-        mode_frame.pack(fill="x", pady=3)
-        for text, value in [
-            ("选择", "select"),
-            ("平移", "drag"),
-            ("裁切", "crop"),
-            ("旋转", "rotate"),
-            ("缩放", "scale"),
-            ("橡皮擦", "erase"),
-        ]:
-            ttk.Radiobutton(mode_frame, text=text, value=value, variable=self.layer_mode_var).pack(side="left")
+        ttk.Label(
+            left,
+            text=(
+                "画布操作：\n"
+                "左键未选中图层：选择图层\n"
+                "右键按住图框内部：平移\n"
+                "左键按住图框内部：橡皮擦\n"
+                "左键按住顶部圆形标识：旋转\n"
+                "左键按住右下蓝色方块：缩放\n"
+                "左键按住红色角点：裁切"
+            ),
+            wraplength=230,
+        ).pack(anchor="w", pady=(8, 6))
 
         self.layer_vars = {
             "x": tk.DoubleVar(value=0),
@@ -194,6 +209,9 @@ class WritingMachineApp:
         self.layers_canvas.bind("<ButtonPress-1>", self.on_layer_mouse_down)
         self.layers_canvas.bind("<B1-Motion>", self.on_layer_mouse_drag)
         self.layers_canvas.bind("<ButtonRelease-1>", self.on_layer_mouse_up)
+        self.layers_canvas.bind("<ButtonPress-3>", self.on_layer_right_down)
+        self.layers_canvas.bind("<B3-Motion>", self.on_layer_mouse_drag)
+        self.layers_canvas.bind("<ButtonRelease-3>", self.on_layer_mouse_up)
         self.layers_canvas.bind("<Motion>", self.on_layer_mouse_move)
         self._layer_mouse_start: dict[str, object] | None = None
 
@@ -595,11 +613,22 @@ class WritingMachineApp:
             width=2,
             tags="layer_overlay",
         )
-        mode = self.layer_mode_var.get()
+        scale_handle = (c2[0] + 18, c2[1] + 18)
+        self.layers_canvas.create_line(c2[0], c2[1], *scale_handle, fill="#1565c0", width=2, tags="layer_overlay")
+        self.layers_canvas.create_rectangle(
+            scale_handle[0] - 8,
+            scale_handle[1] - 8,
+            scale_handle[0] + 8,
+            scale_handle[1] + 8,
+            fill="#1565c0",
+            outline="#ffffff",
+            width=2,
+            tags="layer_overlay",
+        )
         self.layers_canvas.create_text(
             c1[0],
             c1[1] - 18,
-            text=f"当前：{mode}",
+            text="右键移动 / 左键擦除 / 拖动角点裁切",
             anchor="sw",
             fill="#e53935",
             tags="layer_overlay",
@@ -639,10 +668,10 @@ class WritingMachineApp:
     def scaled_corners(
         self,
         bbox: tuple[float, float, float, float],
-        center: tuple[float, float],
         factor: float,
     ) -> list[tuple[float, float]]:
-        return [(center[0] + (x - center[0]) * factor, center[1] + (y - center[1]) * factor) for x, y in self.bbox_corners(bbox)]
+        x1, y1, x2, y2 = bbox
+        return [(x1, y1), (x1 + (x2 - x1) * factor, y1), (x1 + (x2 - x1) * factor, y1 + (y2 - y1) * factor), (x1, y1 + (y2 - y1) * factor)]
 
     def hit_test_layer(self, x: float, y: float) -> int | None:
         for index in range(len(self.state.layers) - 1, -1, -1):
@@ -675,32 +704,58 @@ class WritingMachineApp:
         cx, cy = self.layers_canvas.image_to_canvas(*image_point)
         return math.hypot(event_x - cx, event_y - cy) <= radius
 
+    def rotate_handle_point(self, bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+        x1, y1, x2, _y2 = bbox
+        return ((x1 + x2) / 2, y1 - 28 / max(self.layers_canvas.scale, 0.001))
+
+    def scale_handle_point(self, bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+        _x1, _y1, x2, y2 = bbox
+        return (x2 + 18 / max(self.layers_canvas.scale, 0.001), y2 + 18 / max(self.layers_canvas.scale, 0.001))
+
+    def bbox_contains(self, bbox: tuple[float, float, float, float], point: tuple[float, float]) -> bool:
+        x1, y1, x2, y2 = bbox
+        return x1 <= point[0] <= x2 and y1 <= point[1] <= y2
+
+    def near_crop_corner(self, event_x: float, event_y: float, bbox: tuple[float, float, float, float], radius: float = 14) -> str | None:
+        x1, y1, x2, y2 = bbox
+        corners = {"tl": (x1, y1), "tr": (x2, y1), "br": (x2, y2), "bl": (x1, y2)}
+        for name, point in corners.items():
+            if self.is_near_canvas_point(event_x, event_y, point, radius):
+                return name
+        return None
+
     def on_layer_mouse_down(self, event) -> None:
         point = self.layers_canvas.canvas_to_image(event.x, event.y)
         if point is None:
             return
         hit = self.hit_test_layer(point[0], point[1])
-        if hit is not None:
+        current_index = self.current_layer_index()
+        if hit is not None and hit != current_index:
             self.select_layer_index(hit)
+            self._layer_mouse_start = None
+            return
         layer = self.current_layer()
         if layer is None:
             self._layer_mouse_start = None
             return
         bbox = self.selected_layer_bbox()
-        mode = self.layer_mode_var.get()
-        if mode == "select" or bbox is None:
+        if bbox is None:
             self._layer_mouse_start = None
             return
         center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
-        rotate_handle = (center[0], bbox[1] - 28 / max(self.layers_canvas.scale, 0.001))
-        bottom_right = (bbox[2], bbox[3])
-        if mode == "rotate" and not self.is_near_canvas_point(event.x, event.y, rotate_handle, radius=22):
-            self._layer_mouse_start = None
-            return
-        if mode == "scale" and not self.is_near_canvas_point(event.x, event.y, bottom_right, radius=18):
-            self._layer_mouse_start = None
-            return
-        if mode == "drag" and hit is None:
+        mode = None
+        if self.is_near_canvas_point(event.x, event.y, self.rotate_handle_point(bbox), radius=22):
+            mode = "rotate"
+        elif self.is_near_canvas_point(event.x, event.y, self.scale_handle_point(bbox), radius=18):
+            mode = "scale"
+        else:
+            crop_corner = self.near_crop_corner(event.x, event.y, bbox)
+            if crop_corner:
+                mode = "crop"
+            elif self.bbox_contains(bbox, point):
+                mode = "erase"
+
+        if mode is None:
             self._layer_mouse_start = None
             return
         dx = point[0] - center[0]
@@ -724,10 +779,39 @@ class WritingMachineApp:
             "center": center,
             "angle": mouse_angle,
             "distance": mouse_distance,
-            "corner": self.nearest_crop_corner(point, bbox),
+            "corner": self.near_crop_corner(event.x, event.y, bbox) or self.nearest_crop_corner(point, bbox),
         }
         if mode == "erase":
             self.draw_eraser_preview(point)
+
+    def on_layer_right_down(self, event) -> None:
+        point = self.layers_canvas.canvas_to_image(event.x, event.y)
+        if point is None:
+            return
+        layer = self.current_layer()
+        bbox = self.selected_layer_bbox()
+        if layer is None or bbox is None or not self.bbox_contains(bbox, point):
+            self._layer_mouse_start = None
+            return
+        center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+        self._layer_mouse_start = {
+            "mode": "drag",
+            "point": point,
+            "bbox": bbox,
+            "corners": self.bbox_corners(bbox),
+            "x": layer.x,
+            "y": layer.y,
+            "scale": layer.scale,
+            "rotation_deg": layer.rotation_deg,
+            "crop_left": layer.crop_left,
+            "crop_top": layer.crop_top,
+            "crop_right": layer.crop_right,
+            "crop_bottom": layer.crop_bottom,
+            "center": center,
+            "angle": 0.0,
+            "distance": 1.0,
+            "corner": "br",
+        }
 
     def on_layer_mouse_drag(self, event) -> None:
         layer = self.current_layer()
@@ -761,11 +845,14 @@ class WritingMachineApp:
                 layer.rotation_deg += 360
             self.draw_live_box(self.rotate_corners(start["corners"], (cx, cy), delta_angle), f"{layer.rotation_deg:.1f}°")  # type: ignore[arg-type,index]
         elif mode == "scale":
-            current_distance = max(1.0, math.hypot(point[0] - cx, point[1] - cy))
-            factor = current_distance / float(start["distance"])
+            original_width = max(1.0, float(bbox[2]) - float(bbox[0]))  # type: ignore[index]
+            original_height = max(1.0, float(bbox[3]) - float(bbox[1]))  # type: ignore[index]
+            factor_x = (point[0] - float(bbox[0])) / original_width  # type: ignore[index]
+            factor_y = (point[1] - float(bbox[1])) / original_height  # type: ignore[index]
+            factor = max(0.05, min(5.0, (factor_x + factor_y) / 2))
             layer.scale = max(0.05, min(5.0, float(start["scale"]) * factor))
             actual_factor = layer.scale / max(0.001, float(start["scale"]))
-            self.draw_live_box(self.scaled_corners(bbox, (cx, cy), actual_factor), f"{layer.scale:.2f}x")  # type: ignore[arg-type]
+            self.draw_live_box(self.scaled_corners(bbox, actual_factor), f"{layer.scale:.2f}x")  # type: ignore[arg-type]
         elif mode == "crop":
             corner = str(start["corner"])
             factor = max(0.05, float(start["scale"]))
@@ -799,12 +886,12 @@ class WritingMachineApp:
         self.refresh_layers_preview()
 
     def on_layer_mouse_move(self, event) -> None:
-        if self.layer_mode_var.get() != "erase":
-            self.layers_canvas.delete("eraser_preview")
-            return
         point = self.layers_canvas.canvas_to_image(event.x, event.y)
-        if point is not None:
+        bbox = self.selected_layer_bbox()
+        if point is not None and bbox is not None and self.bbox_contains(bbox, point):
             self.draw_eraser_preview(point, preview_only=True)
+        else:
+            self.layers_canvas.delete("eraser_preview")
 
     def draw_eraser_preview(self, point: tuple[float, float], preview_only: bool = False) -> None:
         if preview_only:
