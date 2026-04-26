@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 import math
 import queue
@@ -94,8 +95,12 @@ class WritingMachineApp:
         self.runner: GCodeRunner | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._erase_points: list[tuple[float, float]] = []
+        self.undo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
+        self.redo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
 
         self._build_ui()
+        self.root.bind_all("<Control-z>", self.undo)
+        self.root.bind_all("<Control-y>", self.redo)
         self.refresh_layer_list()
         self.refresh_layers_preview()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -230,6 +235,80 @@ class WritingMachineApp:
         spin.bind("<Return>", lambda _event: self.update_current_layer())
         spin.bind("<FocusOut>", lambda _event: self.update_current_layer())
 
+    def make_undo_snapshot(self) -> tuple[ProjectState, list[Stroke], list[str], int | None]:
+        return (
+            copy.deepcopy(self.state),
+            copy.deepcopy(self.strokes),
+            list(self.gcode_lines),
+            self.current_layer_index() if hasattr(self, "layer_list") else None,
+        )
+
+    def push_undo_state(self) -> None:
+        self.undo_stack.append(self.make_undo_snapshot())
+        if len(self.undo_stack) > 80:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def restore_undo_snapshot(self, snapshot: tuple[ProjectState, list[Stroke], list[str], int | None]) -> None:
+        state, strokes, gcode_lines, selected_index = snapshot
+        self.state = copy.deepcopy(state)
+        self.strokes = copy.deepcopy(strokes)
+        self.gcode_lines = list(gcode_lines)
+        self.sync_ui_from_state(selected_index)
+        self.state.save(self.artifacts / "project.json")
+
+    def sync_ui_from_state(self, selected_index: int | None = None) -> None:
+        if self.state.reference is not None:
+            self.width_mm_var.set(str(self.state.reference.width_mm))
+            self.height_mm_var.set(str(self.state.reference.height_mm))
+            if self.state.reference.image_path and Path(self.state.reference.image_path).exists():
+                self.ref_edit_image = load_rgba(self.state.reference.image_path)
+                self.ref_canvas.set_image(self.ref_edit_image)
+        if hasattr(self, "rotate_trajectory_180_var"):
+            self.rotate_trajectory_180_var.set(self.state.rotate_trajectory_180)
+        if hasattr(self, "epsilon_var"):
+            self.epsilon_var.set(self.state.stroke.simplify_epsilon)
+            self.stroke_alpha_threshold_var.set(self.state.stroke.alpha_threshold)
+            self.stroke_min_points_var.set(self.state.stroke.min_points)
+        if hasattr(self, "port_var"):
+            self.port_var.set(self.state.machine.port)
+            self.baud_var.set(self.state.machine.baud)
+            self.invert_x_var.set(self.state.machine.invert_x)
+            self.invert_y_var.set(self.state.machine.invert_y)
+        if hasattr(self, "text_width_var"):
+            self.text_width_var.set(self.state.text_render.width)
+            self.text_height_var.set(self.state.text_render.height)
+            self.font_size_var.set(self.state.text_render.font_size)
+            self.perturb_x_var.set(self.state.text_render.perturb_x_sigma)
+            self.perturb_y_var.set(self.state.text_render.perturb_y_sigma)
+            self.perturb_theta_var.set(self.state.text_render.perturb_theta_sigma)
+            self.text_seed_var.set(self.state.text_render.seed)
+        self.refresh_layer_list()
+        if self.state.layers:
+            index = min(max(selected_index or 0, 0), len(self.state.layers) - 1)
+            self.layer_list.selection_clear(0, tk.END)
+            self.layer_list.selection_set(index)
+            self.layer_list.see(index)
+            self.load_layer_to_controls()
+        else:
+            self.layer_list.selection_clear(0, tk.END)
+            self.refresh_layers_preview()
+        self.draw_strokes_preview()
+
+    def undo(self, _event=None) -> str:
+        if not self.undo_stack:
+            return "break"
+        self.redo_stack.append(self.make_undo_snapshot())
+        self.restore_undo_snapshot(self.undo_stack.pop())
+        return "break"
+
+    def redo(self, _event=None) -> str:
+        if not self.redo_stack:
+            return "break"
+        self.undo_stack.append(self.make_undo_snapshot())
+        self.restore_undo_snapshot(self.redo_stack.pop())
+        return "break"
+
     def _build_strokes_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="3 轨迹生成")
@@ -252,7 +331,7 @@ class WritingMachineApp:
             left,
             text="执行时使用对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
-            command=self.refresh_trajectory_preview,
+            command=self.on_trajectory_mode_toggle,
         ).pack(anchor="w", pady=8)
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
         ttk.Button(left, text="从透明字迹图生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
@@ -315,8 +394,8 @@ class WritingMachineApp:
 
         self.port_var = tk.StringVar(value=self.state.machine.port)
         self.baud_var = tk.IntVar(value=self.state.machine.baud)
-        self.invert_x_var = tk.BooleanVar(value=False)
-        self.invert_y_var = tk.BooleanVar(value=False)
+        self.invert_x_var = tk.BooleanVar(value=self.state.machine.invert_x)
+        self.invert_y_var = tk.BooleanVar(value=self.state.machine.invert_y)
         self.dry_run_var = tk.BooleanVar(value=True)
 
         ttk.Button(left, text="刷新串口", command=self.refresh_ports).pack(fill="x", pady=3)
@@ -330,7 +409,7 @@ class WritingMachineApp:
             left,
             text="对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
-            command=self.refresh_trajectory_preview,
+            command=self.on_trajectory_mode_toggle,
         ).pack(anchor="w", pady=3)
         ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var).pack(anchor="w", pady=8)
         ttk.Button(left, text="生成/刷新 G-code", command=self.export_gcode).pack(fill="x", pady=3)
@@ -446,6 +525,7 @@ class WritingMachineApp:
             path = self.artifacts / "reference_canvas.png"
             image.save(path)
             reference.image_path = str(path)
+            self.push_undo_state()
             self.state.reference = reference
             self.state.save(self.artifacts / "project.json")
             self.refresh_layers_preview()
@@ -507,6 +587,7 @@ class WritingMachineApp:
             loaded = ProjectState.load(path)
             if loaded.reference is None:
                 raise ValueError("配置文件中没有 reference 信息。")
+            self.push_undo_state()
             self.state.reference = loaded.reference
             if self.state.layers and messagebox.askyesno("切换底图", "是否清空当前答案图层？不同底图尺寸可能导致旧图层错位。"):
                 self.state.layers.clear()
@@ -529,6 +610,7 @@ class WritingMachineApp:
         if not path:
             return
         layer = AnswerLayer(source_path=path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+        self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()
         self.layer_list.selection_clear(0, tk.END)
@@ -565,10 +647,19 @@ class WritingMachineApp:
         layer = self.current_layer()
         if layer is None:
             return
+        changed = False
+        new_values: dict[str, float | int] = {}
         for key, var in self.layer_vars.items():
             value = var.get()
             if key.startswith("crop") or key == "threshold":
                 value = int(value)
+            new_values[key] = value
+            if getattr(layer, key) != value:
+                changed = True
+        if not changed:
+            return
+        self.push_undo_state()
+        for key, value in new_values.items():
             setattr(layer, key, value)
         self.state.save(self.artifacts / "project.json")
         self.refresh_layers_preview()
@@ -585,6 +676,7 @@ class WritingMachineApp:
         index = self.current_layer_index()
         if index is None:
             return
+        self.push_undo_state()
         del self.state.layers[index]
         self.refresh_layer_list()
         self.refresh_layers_preview()
@@ -820,6 +912,7 @@ class WritingMachineApp:
             "distance": mouse_distance,
             "corner": self.near_crop_corner(event.x, event.y, bbox) or self.nearest_crop_corner(point, bbox),
         }
+        self.push_undo_state()
         if mode == "erase":
             self.draw_eraser_preview(point)
 
@@ -851,6 +944,7 @@ class WritingMachineApp:
             "distance": 1.0,
             "corner": "br",
         }
+        self.push_undo_state()
 
     def on_layer_mouse_drag(self, event) -> None:
         layer = self.current_layer()
@@ -895,18 +989,28 @@ class WritingMachineApp:
         elif mode == "crop":
             corner = str(start["corner"])
             factor = max(0.05, float(start["scale"]))
+            start_crop_left = int(start["crop_left"])
+            start_crop_top = int(start["crop_top"])
+            start_crop_right = int(start["crop_right"])
+            start_crop_bottom = int(start["crop_bottom"])
             if "l" in corner:
-                layer.crop_left = max(0, int(round(float(start["crop_left"]) + dx / factor)))
-                x1 = float(bbox[0]) + dx  # type: ignore[index]
+                layer.crop_left = max(0, int(round(start_crop_left + dx / factor)))
             if "r" in corner:
-                layer.crop_right = max(0, int(round(float(start["crop_right"]) - dx / factor)))
-                x2 = float(bbox[2]) + dx  # type: ignore[index]
+                layer.crop_right = max(0, int(round(start_crop_right - dx / factor)))
             if "t" in corner:
-                layer.crop_top = max(0, int(round(float(start["crop_top"]) + dy / factor)))
-                y1 = float(bbox[1]) + dy  # type: ignore[index]
+                layer.crop_top = max(0, int(round(start_crop_top + dy / factor)))
             if "b" in corner:
-                layer.crop_bottom = max(0, int(round(float(start["crop_bottom"]) - dy / factor)))
-                y2 = float(bbox[3]) + dy  # type: ignore[index]
+                layer.crop_bottom = max(0, int(round(start_crop_bottom - dy / factor)))
+            delta_left = layer.crop_left - start_crop_left
+            delta_top = layer.crop_top - start_crop_top
+            delta_right = layer.crop_right - start_crop_right
+            delta_bottom = layer.crop_bottom - start_crop_bottom
+            layer.x = float(start["x"]) + delta_left * factor
+            layer.y = float(start["y"]) + delta_top * factor
+            x1 = float(bbox[0]) + delta_left * factor  # type: ignore[index]
+            y1 = float(bbox[1]) + delta_top * factor  # type: ignore[index]
+            x2 = float(bbox[2]) - delta_right * factor  # type: ignore[index]
+            y2 = float(bbox[3]) - delta_bottom * factor  # type: ignore[index]
             self.draw_live_box(self.bbox_corners((x1, y1, x2, y2)), "裁切")
         elif mode == "erase":
             self._erase_points.append(point)
@@ -1005,6 +1109,7 @@ class WritingMachineApp:
             return
         try:
             image = load_rgba(path)
+            self.push_undo_state()
             self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
             self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
@@ -1062,6 +1167,10 @@ class WritingMachineApp:
             self.state.save(self.artifacts / "project.json")
         else:
             self.preview_rotated_handwriting()
+
+    def on_trajectory_mode_toggle(self) -> None:
+        self.push_undo_state()
+        self.refresh_trajectory_preview()
 
     def load_strokes_json(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("Stroke JSON", "*.json")])
