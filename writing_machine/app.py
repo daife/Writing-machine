@@ -272,6 +272,7 @@ class WritingMachineApp:
             self.epsilon_var.set(self.state.stroke.simplify_epsilon)
             self.stroke_alpha_threshold_var.set(self.state.stroke.alpha_threshold)
             self.stroke_min_points_var.set(self.state.stroke.min_points)
+            self.spur_prune_length_var.set(self.state.stroke.spur_prune_length)
         if hasattr(self, "port_var"):
             self.port_var.set(self.state.machine.port)
             self.baud_var.set(self.state.machine.baud)
@@ -328,6 +329,9 @@ class WritingMachineApp:
         ttk.Label(left, text="每笔最少点数").pack(anchor="w", pady=(7, 0))
         self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
         ttk.Spinbox(left, from_=2, to=20, increment=1, textvariable=self.stroke_min_points_var).pack(fill="x")
+        ttk.Label(left, text="毛刺剪枝长度(px)").pack(anchor="w", pady=(7, 0))
+        self.spur_prune_length_var = tk.IntVar(value=self.state.stroke.spur_prune_length)
+        ttk.Spinbox(left, from_=0, to=80, increment=1, textvariable=self.spur_prune_length_var).pack(fill="x")
         self.rotate_trajectory_180_var = tk.BooleanVar(value=self.state.rotate_trajectory_180)
         ttk.Checkbutton(
             left,
@@ -1176,11 +1180,13 @@ class WritingMachineApp:
             self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
             self.strokes = generate_strokes(
                 image,
                 simplify_epsilon=self.state.stroke.simplify_epsilon,
                 alpha_threshold=self.state.stroke.alpha_threshold,
                 min_points=self.state.stroke.min_points,
+                spur_prune_length=self.state.stroke.spur_prune_length,
             )
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")

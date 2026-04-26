@@ -55,6 +55,7 @@ class StrokeConfig:
     simplify_epsilon: float = 2.0
     alpha_threshold: int = 20
     min_points: int = 2
+    spur_prune_length: int = 8
 
 
 @dataclass

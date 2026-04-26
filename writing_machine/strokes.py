@@ -33,6 +33,12 @@ def _neighbors(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tup
     return found
 
 
+def _neighbors4(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tuple[int, int]]:
+    x, y = point
+    candidates = ((x, y - 1), (x - 1, y), (x + 1, y), (x, y + 1))
+    return [candidate for candidate in candidates if candidate in pixels]
+
+
 def _edge_key(a: tuple[int, int], b: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
     return tuple(sorted((a, b)))  # type: ignore[return-value]
 
@@ -109,17 +115,66 @@ def image_to_mask(image: Image.Image, threshold: int = 20) -> np.ndarray:
     return (gray < 240).astype(bool)
 
 
+def prune_short_terminal_branches(skeleton: np.ndarray, max_branch_length: int, max_passes: int = 20) -> np.ndarray:
+    if max_branch_length <= 0:
+        return skeleton.astype(bool)
+    pixels = set(zip(*np.where(skeleton.astype(bool))[::-1]))
+    if not pixels:
+        return skeleton.astype(bool)
+
+    for _pass in range(max_passes):
+        degree = {pixel: len(_neighbors4(pixel, pixels)) for pixel in pixels}
+        endpoints = sorted((pixel for pixel, deg in degree.items() if deg == 1), key=lambda item: (item[1], item[0]))
+        to_remove: set[tuple[int, int]] = set()
+
+        for endpoint in endpoints:
+            if endpoint not in pixels or endpoint in to_remove:
+                continue
+            path = [endpoint]
+            prev: tuple[int, int] | None = None
+            cur = endpoint
+            terminal_degree = degree[cur]
+
+            while True:
+                if cur != endpoint:
+                    terminal_degree = degree[cur]
+                    if terminal_degree != 2:
+                        break
+                candidates = [item for item in _neighbors4(cur, pixels) if item != prev]
+                if not candidates:
+                    break
+                nxt = candidates[0]
+                path.append(nxt)
+                prev, cur = cur, nxt
+                if len(path) > max_branch_length + 1:
+                    break
+
+            branch_length = len(path) - 1
+            if branch_length <= max_branch_length and terminal_degree >= 3:
+                to_remove.update(path[:-1])
+
+        if not to_remove:
+            break
+        pixels.difference_update(to_remove)
+
+    pruned = np.zeros_like(skeleton, dtype=bool)
+    for x, y in pixels:
+        pruned[y, x] = True
+    return pruned
+
+
 def generate_strokes(
     image: Image.Image,
     simplify_epsilon: float = 2.0,
     min_points: int = 2,
     alpha_threshold: int = 20,
+    spur_prune_length: int = 8,
 ) -> list[Stroke]:
     mask = image_to_mask(image, threshold=alpha_threshold)
     if not mask.any():
         return []
 
-    skeleton = skeletonize(mask)
+    skeleton = prune_short_terminal_branches(skeletonize(mask), spur_prune_length)
     count, labels = cv2.connectedComponents(skeleton.astype(np.uint8), 8)
     strokes: list[Stroke] = []
 
