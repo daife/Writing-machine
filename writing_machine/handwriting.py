@@ -61,7 +61,7 @@ def render_text(
                 perturb_theta_sigma=perturb_theta_sigma,
             )
             image = next(iter(handwrite(text, template, seed=seed))).convert("RGBA")
-            extract_black_handwriting(image, threshold=210, min_area=2).save(target)
+            extract_black_handwriting(image, threshold=210, min_area=2, alpha_blur=0).save(target)
             return str(target)
         except Exception as exc:
             raise RuntimeError(f"Handright 生成失败：{exc}") from exc

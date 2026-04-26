@@ -623,7 +623,7 @@ class WritingMachineApp:
         except Exception as exc:
             messagebox.showerror("加载失败", str(exc))
 
-    def add_answer_layer(self, path: str | None = None) -> None:
+    def add_answer_layer(self, path: str | None = None, preserve_transparency: bool = False) -> None:
         ref = self.require_reference()
         if ref is None:
             return
@@ -631,6 +631,10 @@ class WritingMachineApp:
         if not path:
             return
         layer = AnswerLayer(source_path=path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+        if preserve_transparency:
+            layer.already_extracted = True
+            layer.threshold = 255
+            layer.min_area = 1
         self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()
@@ -1307,7 +1311,7 @@ class WritingMachineApp:
         if not self.generated_text_path or not Path(self.generated_text_path).exists():
             messagebox.showwarning("缺少图片", "请先点击“生成手写图片”。")
             return
-        self.add_answer_layer(self.generated_text_path)
+        self.add_answer_layer(self.generated_text_path, preserve_transparency=True)
         self.notebook.select(1)
 
     def _machine_config_from_ui(self) -> MachineConfig:
