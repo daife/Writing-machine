@@ -201,6 +201,7 @@ class WritingMachineApp:
             "crop_top": tk.IntVar(value=0),
             "crop_right": tk.IntVar(value=0),
             "crop_bottom": tk.IntVar(value=0),
+            "erosion_iterations": tk.IntVar(value=1),
         }
         self._add_layer_control(left, "X", "x", -2000, 4000, 1)
         self._add_layer_control(left, "Y", "y", -2000, 4000, 1)
@@ -211,6 +212,7 @@ class WritingMachineApp:
         self._add_layer_control(left, "裁上", "crop_top", 0, 2000, 1)
         self._add_layer_control(left, "裁右", "crop_right", 0, 2000, 1)
         self._add_layer_control(left, "裁下", "crop_bottom", 0, 2000, 1)
+        self._add_layer_control(left, "腐蚀次数", "erosion_iterations", 0, 5, 1)
         ttk.Label(left, text="橡皮擦半径 px").pack(anchor="w", pady=(7, 0))
         self.eraser_radius_var = tk.IntVar(value=18)
         ttk.Spinbox(left, from_=2, to=200, increment=1, textvariable=self.eraser_radius_var).pack(fill="x")
@@ -635,6 +637,7 @@ class WritingMachineApp:
             layer.already_extracted = True
             layer.threshold = 255
             layer.min_area = 1
+            layer.erosion_iterations = 0
         self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()
@@ -676,7 +679,7 @@ class WritingMachineApp:
         new_values: dict[str, float | int] = {}
         for key, var in self.layer_vars.items():
             value = var.get()
-            if key.startswith("crop") or key == "threshold":
+            if key.startswith("crop") or key in {"threshold", "erosion_iterations"}:
                 value = int(value)
             new_values[key] = value
             if getattr(layer, key) != value:
@@ -754,6 +757,7 @@ class WritingMachineApp:
         layer.crop_right = 0
         layer.crop_bottom = 0
         layer.threshold = 255
+        layer.erosion_iterations = 0
         layer.already_extracted = True
 
     def draw_layer_selection_overlay(self) -> None:
@@ -1141,6 +1145,7 @@ class WritingMachineApp:
         layer.rotation_deg = 0.0
         layer.crop_left = layer.crop_top = layer.crop_right = layer.crop_bottom = 0
         layer.threshold = 255
+        layer.erosion_iterations = 0
         layer.already_extracted = True
         self.sync_layer_controls(layer)
 

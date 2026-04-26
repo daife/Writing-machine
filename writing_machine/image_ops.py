@@ -4,7 +4,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 
 from .models import AnswerLayer, ReferenceCanvas
 
@@ -91,7 +91,8 @@ def extract_black_handwriting(
     image: Image.Image,
     threshold: int = 120,
     min_area: int = 5,
-    alpha_blur: float = 0.3,
+    alpha_blur: float = 0.0,
+    erosion_iterations: int = 1,
 ) -> Image.Image:
     rgba = image.convert("RGBA")
     rgb = np.array(rgba.convert("RGB"))
@@ -99,9 +100,10 @@ def extract_black_handwriting(
     alpha_source = np.array(rgba.getchannel("A"))
     mask = ((gray <= threshold) & (alpha_source > 0)).astype(np.uint8) * 255
     mask = _remove_small_components(mask, min_area)
+    if erosion_iterations > 0:
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=int(erosion_iterations))
     alpha = Image.fromarray(mask, "L")
-    if alpha_blur > 0:
-        alpha = alpha.filter(ImageFilter.GaussianBlur(alpha_blur))
     black = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
     black.putalpha(alpha)
     return black
@@ -116,7 +118,12 @@ def render_layer(layer: AnswerLayer) -> Image.Image:
     bottom_crop = max(0, min(height - top - 1, layer.crop_bottom))
     image = image.crop((left, top, width - right_crop, height - bottom_crop))
     if not layer.already_extracted:
-        image = extract_black_handwriting(image, layer.threshold, layer.min_area)
+        image = extract_black_handwriting(
+            image,
+            layer.threshold,
+            layer.min_area,
+            erosion_iterations=layer.erosion_iterations,
+        )
     if layer.scale != 1.0:
         new_size = (
             max(1, int(round(image.width * layer.scale))),

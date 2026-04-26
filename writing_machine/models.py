@@ -29,6 +29,7 @@ class AnswerLayer:
     crop_bottom: int = 0
     threshold: int = 120
     min_area: int = 5
+    erosion_iterations: int = 1
     already_extracted: bool = False
     enabled: bool = True
 
