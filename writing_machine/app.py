@@ -711,6 +711,26 @@ class WritingMachineApp:
             return None
         return (layer.x, layer.y, layer.x + rendered.width, layer.y + rendered.height)
 
+    def layer_needs_crop_bake(self, layer: AnswerLayer) -> bool:
+        return abs(layer.rotation_deg) > 0.001
+
+    def bake_current_layer_for_crop(self, layer: AnswerLayer) -> None:
+        index = self.current_layer_index()
+        if index is None:
+            return
+        rendered = render_layer(layer)
+        target = self.artifacts / f"baked_layer_{index + 1}_{int(time.time() * 1000)}.png"
+        rendered.save(target)
+        layer.source_path = str(target)
+        layer.scale = 1.0
+        layer.rotation_deg = 0.0
+        layer.crop_left = 0
+        layer.crop_top = 0
+        layer.crop_right = 0
+        layer.crop_bottom = 0
+        layer.threshold = 255
+        layer.already_extracted = True
+
     def draw_layer_selection_overlay(self) -> None:
         self.layers_canvas.delete("layer_overlay")
         bbox = self.selected_layer_bbox()
@@ -889,6 +909,17 @@ class WritingMachineApp:
         if mode is None:
             self._layer_mouse_start = None
             return
+        undo_pushed = False
+        if mode == "crop" and self.layer_needs_crop_bake(layer):
+            self.push_undo_state()
+            undo_pushed = True
+            self.bake_current_layer_for_crop(layer)
+            self.sync_layer_controls(layer)
+            bbox = self.selected_layer_bbox()
+            point = self.layers_canvas.canvas_to_image(event.x, event.y)
+            if bbox is None or point is None:
+                self._layer_mouse_start = None
+                return
         dx = point[0] - center[0]
         dy = point[1] - center[1]
         mouse_angle = math.degrees(math.atan2(dy, dx))
@@ -912,7 +943,8 @@ class WritingMachineApp:
             "distance": mouse_distance,
             "corner": self.near_crop_corner(event.x, event.y, bbox) or self.nearest_crop_corner(point, bbox),
         }
-        self.push_undo_state()
+        if not undo_pushed:
+            self.push_undo_state()
         if mode == "erase":
             self.draw_eraser_preview(point)
 
