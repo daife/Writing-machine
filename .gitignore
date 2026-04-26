@@ -1,0 +1,38 @@
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python caches/build output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Local runtime artifacts
+artifacts/
+serial_log.txt
+execution_log.txt
+*.log
+
+# Generated machine/job files
+*.gcode
+
+# Local editor/OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+
+# Local environment files
+.env
+.env.*
+字幕.srt

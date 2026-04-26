@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import json
+import math
+
+import cv2
+import numpy as np
+from PIL import Image
+from skimage.morphology import skeletonize
+
+
+Point = tuple[float, float]
+
+
+@dataclass
+class Stroke:
+    points: list[Point]
+    closed: bool = False
+
+
+def _neighbors(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tuple[int, int]]:
+    x, y = point
+    found = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dx == 0 and dy == 0:
+                continue
+            candidate = (x + dx, y + dy)
+            if candidate in pixels:
+                found.append(candidate)
+    return found
+
+
+def _edge_key(a: tuple[int, int], b: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
+    return tuple(sorted((a, b)))  # type: ignore[return-value]
+
+
+def _trace_from_node(
+    start: tuple[int, int],
+    nxt: tuple[int, int],
+    pixels: set[tuple[int, int]],
+    nodes: set[tuple[int, int]],
+    visited_edges: set[tuple[tuple[int, int], tuple[int, int]]],
+) -> list[tuple[int, int]]:
+    path = [start, nxt]
+    visited_edges.add(_edge_key(start, nxt))
+    prev, cur = start, nxt
+    while cur not in nodes:
+        candidates = [item for item in _neighbors(cur, pixels) if item != prev]
+        candidates = [item for item in candidates if _edge_key(cur, item) not in visited_edges]
+        if not candidates:
+            break
+        chosen = candidates[0]
+        visited_edges.add(_edge_key(cur, chosen))
+        path.append(chosen)
+        prev, cur = cur, chosen
+    return path
+
+
+def _trace_loop(seed: tuple[int, int], pixels: set[tuple[int, int]], visited: set[tuple[int, int]]) -> list[tuple[int, int]]:
+    path = [seed]
+    visited.add(seed)
+    prev = None
+    cur = seed
+    while True:
+        candidates = [item for item in _neighbors(cur, pixels) if item != prev and item not in visited]
+        if not candidates:
+            break
+        nxt = candidates[0]
+        path.append(nxt)
+        visited.add(nxt)
+        prev, cur = cur, nxt
+    return path
+
+
+def rdp(points: list[Point], epsilon: float) -> list[Point]:
+    if len(points) < 3:
+        return points
+    start = np.array(points[0], dtype=float)
+    end = np.array(points[-1], dtype=float)
+    line = end - start
+    line_len = np.linalg.norm(line)
+    max_dist = -1.0
+    index = 0
+    for i in range(1, len(points) - 1):
+        point = np.array(points[i], dtype=float)
+        if line_len == 0:
+            dist = np.linalg.norm(point - start)
+        else:
+            dist = abs(np.cross(line, start - point)) / line_len
+        if dist > max_dist:
+            max_dist = float(dist)
+            index = i
+    if max_dist > epsilon:
+        left = rdp(points[: index + 1], epsilon)
+        right = rdp(points[index:], epsilon)
+        return left[:-1] + right
+    return [points[0], points[-1]]
+
+
+def image_to_mask(image: Image.Image, threshold: int = 20) -> np.ndarray:
+    rgba = image.convert("RGBA")
+    alpha = np.array(rgba.getchannel("A"))
+    if alpha.max() > threshold:
+        return (alpha > threshold).astype(bool)
+    gray = np.array(rgba.convert("L"))
+    return (gray < 240).astype(bool)
+
+
+def generate_strokes(
+    image: Image.Image,
+    simplify_epsilon: float = 2.0,
+    min_points: int = 2,
+    alpha_threshold: int = 20,
+) -> list[Stroke]:
+    mask = image_to_mask(image, threshold=alpha_threshold)
+    if not mask.any():
+        return []
+
+    skeleton = skeletonize(mask)
+    count, labels = cv2.connectedComponents(skeleton.astype(np.uint8), 8)
+    strokes: list[Stroke] = []
+
+    for label in range(1, count):
+        ys, xs = np.where(labels == label)
+        pixels = set(zip(xs.tolist(), ys.tolist()))
+        if len(pixels) < min_points:
+            continue
+        degree = {pixel: len(_neighbors(pixel, pixels)) for pixel in pixels}
+        nodes = {pixel for pixel, deg in degree.items() if deg != 2}
+        visited_edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+
+        if nodes:
+            for node in sorted(nodes, key=lambda item: (item[1], item[0])):
+                for nxt in _neighbors(node, pixels):
+                    if _edge_key(node, nxt) in visited_edges:
+                        continue
+                    raw = _trace_from_node(node, nxt, pixels, nodes, visited_edges)
+                    points = [(float(x), float(y)) for x, y in raw]
+                    points = rdp(points, simplify_epsilon)
+                    if len(points) >= min_points:
+                        strokes.append(Stroke(points=points, closed=False))
+        else:
+            visited: set[tuple[int, int]] = set()
+            for pixel in pixels:
+                if pixel in visited:
+                    continue
+                raw = _trace_loop(pixel, pixels, visited)
+                points = [(float(x), float(y)) for x, y in raw]
+                points = rdp(points, simplify_epsilon)
+                if len(points) >= min_points:
+                    strokes.append(Stroke(points=points, closed=True))
+
+    return sorted(strokes, key=lambda stroke: (stroke.points[0][1], stroke.points[0][0]))
+
+
+def save_strokes(strokes: list[Stroke], width_px: int, height_px: int, path: str | Path) -> str:
+    data = {
+        "coordinate_space": "reference_canvas_pixel",
+        "width_px": width_px,
+        "height_px": height_px,
+        "strokes": [
+            {"points": [[round(x, 3), round(y, 3)] for x, y in stroke.points], "closed": stroke.closed}
+            for stroke in strokes
+        ],
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(target)
+
+
+def load_strokes(path: str | Path) -> tuple[list[Stroke], int, int]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    strokes = [
+        Stroke(points=[(float(x), float(y)) for x, y in item["points"]], closed=bool(item.get("closed", False)))
+        for item in data.get("strokes", [])
+    ]
+    return strokes, int(data["width_px"]), int(data["height_px"])
