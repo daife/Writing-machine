@@ -40,6 +40,28 @@ Recommended workflow:
 
 Generated artifacts are stored in `artifacts/`. The app automatically reloads `artifacts/project.json` on startup when it exists, including the last reference canvas, executor settings, and the trajectory rotation option.
 
+## Build Windows EXE
+
+The project can be packaged as a Windows desktop app with PyInstaller. Use the existing virtual environment and install the packaging tool if it is not already installed:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+```
+
+Build the GUI app:
+
+```powershell
+.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --windowed --name WritingMachine --collect-all tkinterdnd2 --collect-submodules skimage --hidden-import serial.tools.list_ports main.py
+```
+
+The generated app is:
+
+```text
+dist\WritingMachine\WritingMachine.exe
+```
+
+Because this uses `--onedir`, distribute the whole `dist\WritingMachine\` folder, not only the `.exe`; the `_internal\` directory contains Python, Tcl/Tk, tkinterdnd2, OpenCV, NumPy, SciPy, and scikit-image runtime files. Build outputs such as `build/`, `dist/`, and `*.spec` are ignored by Git.
+
 ## Serial Capture
 
 This project captures traffic between the official writing-machine software and the real device by using a Windows virtual null-modem COM pair plus a Python serial proxy.

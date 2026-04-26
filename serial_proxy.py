@@ -82,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--virtual-port", default="COM2", help="COM port opened by official PC software.")
     parser.add_argument("--real-port", default="COM13", help="Real COM port connected to the device.")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="Serial baud rate.")
-    parser.add_argument("--log", default="serial_log.txt", help="Path to append captured traffic.")
+    parser.add_argument("--log", default="logs/serial_log.txt", help="Path to append captured traffic.")
     parser.add_argument("--list-ports", action="store_true", help="List detected serial ports and exit.")
     return parser.parse_args()
 
