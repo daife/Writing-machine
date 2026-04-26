@@ -3,6 +3,7 @@
 venv/
 env/
 ENV/
+logs/
 
 # Python caches/build output
 __pycache__/
