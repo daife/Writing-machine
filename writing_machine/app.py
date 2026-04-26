@@ -10,6 +10,12 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except Exception:
+    DND_FILES = None
+    TkinterDnD = None
+
 from .gcode import save_gcode, strokes_to_gcode
 from .handwriting import default_font_path, render_text
 from .image_ops import (
@@ -133,6 +139,7 @@ class WritingMachineApp:
         self.ref_canvas.pack(fill="both", expand=True)
         self.ref_canvas.bind("<Button-1>", self.on_reference_click)
         self.ref_canvas.bind("<Configure>", lambda _event: self.draw_reference_overlay())
+        self.register_file_drop(self.ref_canvas, self.on_reference_drop)
 
     def _build_layers_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
@@ -213,6 +220,7 @@ class WritingMachineApp:
         self.layers_canvas.bind("<B3-Motion>", self.on_layer_mouse_drag)
         self.layers_canvas.bind("<ButtonRelease-3>", self.on_layer_mouse_up)
         self.layers_canvas.bind("<Motion>", self.on_layer_mouse_move)
+        self.register_file_drop(self.layers_canvas, self.on_layers_drop)
         self._layer_mouse_start: dict[str, object] | None = None
 
     def _add_layer_control(self, parent: ttk.Frame, label: str, key: str, min_v: float, max_v: float, increment: float) -> None:
@@ -318,6 +326,12 @@ class WritingMachineApp:
         ttk.Entry(left, textvariable=self.baud_var).pack(fill="x")
         ttk.Checkbutton(left, text="X 轴反向", variable=self.invert_x_var).pack(anchor="w", pady=3)
         ttk.Checkbutton(left, text="Y 轴反向", variable=self.invert_y_var).pack(anchor="w", pady=3)
+        ttk.Checkbutton(
+            left,
+            text="对角原点/XY反向",
+            variable=self.rotate_trajectory_180_var,
+            command=self.preview_rotated_handwriting,
+        ).pack(anchor="w", pady=3)
         ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var).pack(anchor="w", pady=8)
         ttk.Button(left, text="生成/刷新 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         ttk.Button(left, text="开始", command=self.start_execution).pack(fill="x", pady=10)
@@ -334,8 +348,33 @@ class WritingMachineApp:
             return None
         return self.state.reference
 
-    def load_reference_photo(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff")])
+    def register_file_drop(self, widget: tk.Widget, callback) -> None:
+        if DND_FILES is None or not hasattr(widget, "drop_target_register"):
+            return
+        try:
+            widget.drop_target_register(DND_FILES)
+            widget.dnd_bind("<<Drop>>", callback)
+        except Exception as exc:
+            self.log(f"拖拽注册失败：{exc}")
+
+    def dropped_files(self, event) -> list[str]:
+        try:
+            files = list(self.root.tk.splitlist(event.data))
+        except Exception:
+            files = [event.data]
+        return [str(Path(item)) for item in files if str(item).strip()]
+
+    def on_reference_drop(self, event) -> None:
+        files = self.dropped_files(event)
+        if files:
+            self.load_reference_photo(files[0])
+
+    def on_layers_drop(self, event) -> None:
+        for path in self.dropped_files(event):
+            self.add_answer_layer(path)
+
+    def load_reference_photo(self, path: str | None = None) -> None:
+        path = path or filedialog.askopenfilename(filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff")])
         if not path:
             return
         self.ref_edit_image = load_rgba(path)
@@ -1008,9 +1047,10 @@ class WritingMachineApp:
             base = Image.alpha_composite(base, overlay)
             preview = Image.alpha_composite(base, handwriting)
             if self.state.rotate_trajectory_180:
+                preview = preview.rotate(180, expand=False)
                 draw = ImageDraw.Draw(preview)
                 draw.rectangle((8, 8, 450, 42), fill=(255, 255, 255, 220), outline=(220, 0, 0, 255))
-                draw.text((16, 16), "Diagonal origin mode: G-code mirrors X/Y; image is not rotated.", fill=(220, 0, 0, 255))
+                draw.text((16, 16), "Diagonal origin mode preview: paper view rotated 180 deg.", fill=(220, 0, 0, 255))
             self.stroke_canvas.set_image(preview)
             self.state.save(self.artifacts / "project.json")
         except Exception as exc:
@@ -1193,7 +1233,7 @@ class WritingMachineApp:
 
 
 def run() -> None:
-    root = tk.Tk()
+    root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
     style = ttk.Style(root)
     if "vista" in style.theme_names():
         style.theme_use("vista")
