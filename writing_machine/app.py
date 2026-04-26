@@ -67,12 +67,12 @@ class PreviewCanvas(tk.Canvas):
         self.create_image(self.offset_x, self.offset_y, anchor="nw", image=self.photo)
         self.create_rectangle(self.offset_x, self.offset_y, self.offset_x + show_w, self.offset_y + show_h, outline="#999")
 
-    def canvas_to_image(self, x: float, y: float) -> tuple[float, float] | None:
+    def canvas_to_image(self, x: float, y: float, allow_outside: bool = False) -> tuple[float, float] | None:
         if self.image is None:
             return None
         ix = (x - self.offset_x) / self.scale
         iy = (y - self.offset_y) / self.scale
-        if ix < 0 or iy < 0 or ix >= self.image.width or iy >= self.image.height:
+        if not allow_outside and (ix < 0 or iy < 0 or ix >= self.image.width or iy >= self.image.height):
             return None
         return ix, iy
 
@@ -909,7 +909,7 @@ class WritingMachineApp:
         return None
 
     def on_layer_mouse_down(self, event) -> None:
-        point = self.layers_canvas.canvas_to_image(event.x, event.y)
+        point = self.layers_canvas.canvas_to_image(event.x, event.y, allow_outside=True)
         if point is None:
             return
         hit = self.hit_test_layer(point[0], point[1])
@@ -949,7 +949,7 @@ class WritingMachineApp:
             self.bake_current_layer_for_crop(layer)
             self.sync_layer_controls(layer)
             bbox = self.selected_layer_bbox()
-            point = self.layers_canvas.canvas_to_image(event.x, event.y)
+            point = self.layers_canvas.canvas_to_image(event.x, event.y, allow_outside=True)
             if bbox is None or point is None:
                 self._layer_mouse_start = None
                 return
@@ -982,7 +982,7 @@ class WritingMachineApp:
             self.draw_eraser_preview(point)
 
     def on_layer_right_down(self, event) -> None:
-        point = self.layers_canvas.canvas_to_image(event.x, event.y)
+        point = self.layers_canvas.canvas_to_image(event.x, event.y, allow_outside=True)
         if point is None:
             return
         layer = self.current_layer()
@@ -1015,7 +1015,7 @@ class WritingMachineApp:
         layer = self.current_layer()
         if layer is None or self._layer_mouse_start is None:
             return
-        point = self.layers_canvas.canvas_to_image(event.x, event.y)
+        point = self.layers_canvas.canvas_to_image(event.x, event.y, allow_outside=True)
         if point is None:
             return
         start = self._layer_mouse_start
@@ -1094,7 +1094,7 @@ class WritingMachineApp:
         self.refresh_layers_preview()
 
     def on_layer_mouse_move(self, event) -> None:
-        point = self.layers_canvas.canvas_to_image(event.x, event.y)
+        point = self.layers_canvas.canvas_to_image(event.x, event.y, allow_outside=True)
         bbox = self.selected_layer_bbox()
         if point is not None and bbox is not None and self.bbox_contains(bbox, point):
             self.draw_eraser_preview(point, preview_only=True)
