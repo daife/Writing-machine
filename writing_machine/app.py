@@ -252,7 +252,7 @@ class WritingMachineApp:
             left,
             text="执行时使用对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
-            command=self.preview_rotated_handwriting,
+            command=self.refresh_trajectory_preview,
         ).pack(anchor="w", pady=8)
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
         ttk.Button(left, text="从透明字迹图生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
@@ -330,7 +330,7 @@ class WritingMachineApp:
             left,
             text="对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
-            command=self.preview_rotated_handwriting,
+            command=self.refresh_trajectory_preview,
         ).pack(anchor="w", pady=3)
         ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var).pack(anchor="w", pady=8)
         ttk.Button(left, text="生成/刷新 G-code", command=self.export_gcode).pack(fill="x", pady=3)
@@ -1056,6 +1056,13 @@ class WritingMachineApp:
         except Exception as exc:
             messagebox.showerror("预览失败", str(exc))
 
+    def refresh_trajectory_preview(self) -> None:
+        if self.strokes:
+            self.draw_strokes_preview()
+            self.state.save(self.artifacts / "project.json")
+        else:
+            self.preview_rotated_handwriting()
+
     def load_strokes_json(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("Stroke JSON", "*.json")])
         if not path:
@@ -1081,7 +1088,14 @@ class WritingMachineApp:
         for stroke in self.strokes:
             if len(stroke.points) >= 2:
                 draw.line(stroke.points, fill=(220, 0, 0, 220), width=2)
-        self.stroke_canvas.set_image(Image.alpha_composite(image, overlay))
+        preview = Image.alpha_composite(image, overlay)
+        self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
+        if self.state.rotate_trajectory_180:
+            preview = preview.rotate(180, expand=False)
+            draw = ImageDraw.Draw(preview)
+            draw.rectangle((8, 8, 470, 42), fill=(255, 255, 255, 220), outline=(220, 0, 0, 255))
+            draw.text((16, 16), "Diagonal origin mode result: paper and strokes rotated 180 deg.", fill=(220, 0, 0, 255))
+        self.stroke_canvas.set_image(preview)
 
     def choose_font(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("Fonts", "*.ttf;*.ttc;*.otf")])
