@@ -55,7 +55,7 @@ def render_text(
                 top_margin=top_margin,
                 right_margin=20,
                 bottom_margin=20,
-                line_spacing=line_spacing,
+                line_spacing=font_size + line_spacing,
                 perturb_x_sigma=perturb_x_sigma,
                 perturb_y_sigma=perturb_y_sigma,
                 perturb_theta_sigma=perturb_theta_sigma,
@@ -63,8 +63,8 @@ def render_text(
             image = next(iter(handwrite(text, template, seed=seed))).convert("RGBA")
             extract_black_handwriting(image, threshold=210, min_area=2).save(target)
             return str(target)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Handright 生成失败：{exc}") from exc
 
     if seed is not None:
         random.seed(seed)
@@ -79,11 +79,11 @@ def render_text(
     y = top_margin
     for line in text.splitlines() or [""]:
         for char in line:
-            jitter_x = random.uniform(-1.0, 1.0)
-            jitter_y = random.uniform(-1.0, 1.0)
+            jitter_x = random.gauss(0, perturb_x_sigma)
+            jitter_y = random.gauss(0, perturb_y_sigma)
             draw.text((x + jitter_x, y + jitter_y), char, font=font, fill=(0, 0, 0, 255))
             bbox = draw.textbbox((0, 0), char, font=font)
-            x += max(1, bbox[2] - bbox[0]) + random.uniform(-1.0, 2.0)
+            x += max(1, bbox[2] - bbox[0]) + random.gauss(0, max(0.0, perturb_x_sigma) / 2)
             if x > width - 40:
                 x = left_margin
                 y += font_size + line_spacing

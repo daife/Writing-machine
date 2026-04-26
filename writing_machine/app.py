@@ -354,6 +354,7 @@ class WritingMachineApp:
 
         self.text_input = tk.Text(top, height=8)
         self.text_input.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        self.text_input.bind("<KeyRelease>", self.invalidate_generated_text)
         options = ttk.Frame(top)
         options.pack(side="right", fill="y")
         self.text_width_var = tk.IntVar(value=self.state.text_render.width)
@@ -364,6 +365,17 @@ class WritingMachineApp:
         self.perturb_theta_var = tk.DoubleVar(value=self.state.text_render.perturb_theta_sigma)
         self.text_seed_var = tk.IntVar(value=self.state.text_render.seed)
         self.font_path_var = tk.StringVar(value=default_font_path())
+        for var in (
+            self.text_width_var,
+            self.text_height_var,
+            self.font_size_var,
+            self.perturb_x_var,
+            self.perturb_y_var,
+            self.perturb_theta_var,
+            self.text_seed_var,
+            self.font_path_var,
+        ):
+            var.trace_add("write", lambda *_args: self.invalidate_generated_text())
         for label, var in [("宽 px", self.text_width_var), ("高 px", self.text_height_var), ("字号", self.font_size_var)]:
             ttk.Label(options, text=label).pack(anchor="w")
             ttk.Entry(options, textvariable=var, width=12).pack(fill="x", pady=(0, 6))
@@ -378,7 +390,8 @@ class WritingMachineApp:
         ttk.Entry(options, textvariable=self.text_seed_var, width=12).pack(fill="x", pady=(0, 6))
         ttk.Button(options, text="选择字体", command=self.choose_font).pack(fill="x", pady=3)
         ttk.Button(options, text="生成手写图片", command=self.generate_text_image).pack(fill="x", pady=8)
-        ttk.Button(options, text="生成后加入模块2", command=self.add_generated_text_to_layers).pack(fill="x", pady=3)
+        self.add_generated_text_button = ttk.Button(options, text="加入模块2", command=self.add_generated_text_to_layers, state="disabled")
+        self.add_generated_text_button.pack(fill="x", pady=3)
 
         self.text_canvas = PreviewCanvas(bottom, width=900, height=430)
         self.text_canvas.pack(fill="both", expand=True)
@@ -569,7 +582,15 @@ class WritingMachineApp:
             )
             temp_state = ProjectState(reference=saved_ref)
             temp_state.save(json_target)
-            messagebox.showinfo("完成", f"底图配置已保存：{json_target}")
+            self.push_undo_state()
+            self.state.reference = saved_ref
+            self.state.save(self.artifacts / "project.json")
+            if saved_ref.image_path and Path(saved_ref.image_path).exists():
+                self.ref_edit_image = load_rgba(saved_ref.image_path)
+                self.ref_points = []
+                self.ref_canvas.set_image(self.ref_edit_image)
+            self.refresh_layers_preview()
+            messagebox.showinfo("完成", f"底图配置已保存并切换为当前配置：{json_target}")
         except Exception as exc:
             messagebox.showerror("保存失败", str(exc))
 
@@ -1243,6 +1264,11 @@ class WritingMachineApp:
         if path:
             self.font_path_var.set(path)
 
+    def invalidate_generated_text(self, _event=None) -> None:
+        self.generated_text_path = None
+        if hasattr(self, "add_generated_text_button"):
+            self.add_generated_text_button.configure(state="disabled")
+
     def generate_text_image(self) -> None:
         text = self.text_input.get("1.0", "end").strip()
         if not text:
@@ -1271,6 +1297,7 @@ class WritingMachineApp:
             )
             self.generated_text_path = path
             self.text_canvas.set_image(load_rgba(path))
+            self.add_generated_text_button.configure(state="normal")
             self.state.save(self.artifacts / "project.json")
             messagebox.showinfo("完成", f"手写图片已保存：{path}")
         except Exception as exc:
@@ -1278,10 +1305,10 @@ class WritingMachineApp:
 
     def add_generated_text_to_layers(self) -> None:
         if not self.generated_text_path or not Path(self.generated_text_path).exists():
-            self.generate_text_image()
-        if self.generated_text_path:
-            self.add_answer_layer(self.generated_text_path)
-            self.notebook.select(1)
+            messagebox.showwarning("缺少图片", "请先点击“生成手写图片”。")
+            return
+        self.add_answer_layer(self.generated_text_path)
+        self.notebook.select(1)
 
     def _machine_config_from_ui(self) -> MachineConfig:
         config = self.state.machine
