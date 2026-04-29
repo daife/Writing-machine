@@ -343,6 +343,8 @@ class WritingMachineApp:
             "mask_dilation_iterations_var",
             "mask_erosion_iterations_var",
             "spur_prune_length_var",
+            "min_component_area_var",
+            "min_stroke_length_var",
         )
         if not all(hasattr(self, name) for name in required):
             return
@@ -353,6 +355,8 @@ class WritingMachineApp:
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            self.state.stroke.min_component_area = int(self.min_component_area_var.get())
+            self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
@@ -395,6 +399,8 @@ class WritingMachineApp:
             self.mask_dilation_iterations_var.set(self.state.stroke.mask_dilation_iterations)
             self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
             self.spur_prune_length_var.set(self.state.stroke.spur_prune_length)
+            self.min_component_area_var.set(self.state.stroke.min_component_area)
+            self.min_stroke_length_var.set(self.state.stroke.min_stroke_length_px)
         if hasattr(self, "eraser_radius_var"):
             self.eraser_radius_var.set(self.state.eraser_radius)
         if hasattr(self, "port_var"):
@@ -461,6 +467,8 @@ class WritingMachineApp:
         self.mask_dilation_iterations_var = tk.IntVar(value=self.state.stroke.mask_dilation_iterations)
         self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
         self.spur_prune_length_var = tk.IntVar(value=self.state.stroke.spur_prune_length)
+        self.min_component_area_var = tk.IntVar(value=self.state.stroke.min_component_area)
+        self.min_stroke_length_var = tk.DoubleVar(value=self.state.stroke.min_stroke_length_px)
         self.epsilon_var = tk.DoubleVar(value=self.state.stroke.simplify_epsilon)
         self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
         add_stroke_spin(
@@ -488,6 +496,14 @@ class WritingMachineApp:
             "在轨迹生成时、膨胀之后生效。会把字迹 mask 向内收缩，可抵消膨胀或去掉细小毛边；次数过大会吃掉细笔画。",
         )
         add_stroke_spin(
+            "最小噪点面积(px)",
+            self.min_component_area_var,
+            1,
+            200,
+            1,
+            "在骨架化之前生效。连通域面积小于该值的透明字迹碎点会被删除；孤立点多时调大，标点丢失时调小。",
+        )
+        add_stroke_spin(
             "毛刺剪枝长度(px)",
             self.spur_prune_length_var,
             0,
@@ -504,6 +520,14 @@ class WritingMachineApp:
             "在骨架路径追踪之后生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
         )
         add_stroke_spin(
+            "最短笔画长度(px)",
+            self.min_stroke_length_var,
+            0.0,
+            80.0,
+            0.5,
+            "在路径追踪之后生效。长度短于该值的 stroke 会被丢弃，用于过滤骨架碎线和孤立短点；需要保留标点时调小。",
+        )
+        add_stroke_spin(
             "每笔最少点数",
             self.stroke_min_points_var,
             2,
@@ -516,6 +540,8 @@ class WritingMachineApp:
             self.mask_dilation_iterations_var,
             self.mask_erosion_iterations_var,
             self.spur_prune_length_var,
+            self.min_component_area_var,
+            self.min_stroke_length_var,
             self.epsilon_var,
             self.stroke_min_points_var,
         ):
@@ -1537,6 +1563,8 @@ class WritingMachineApp:
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            self.state.stroke.min_component_area = int(self.min_component_area_var.get())
+            self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
             self.strokes = generate_strokes(
                 image,
                 simplify_epsilon=self.state.stroke.simplify_epsilon,
@@ -1545,6 +1573,8 @@ class WritingMachineApp:
                 mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
                 mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
                 spur_prune_length=self.state.stroke.spur_prune_length,
+                min_component_area=self.state.stroke.min_component_area,
+                min_stroke_length_px=self.state.stroke.min_stroke_length_px,
             )
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")
@@ -1871,6 +1901,10 @@ class WritingMachineApp:
                 self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             if hasattr(self, "spur_prune_length_var"):
                 self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            if hasattr(self, "min_component_area_var"):
+                self.state.stroke.min_component_area = int(self.min_component_area_var.get())
+            if hasattr(self, "min_stroke_length_var"):
+                self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
             if hasattr(self, "eraser_radius_var"):
                 self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
             if hasattr(self, "text_line_width_var"):

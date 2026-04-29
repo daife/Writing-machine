@@ -33,10 +33,26 @@ def _neighbors(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tup
     return found
 
 
-def _neighbors4(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tuple[int, int]]:
-    x, y = point
-    candidates = ((x, y - 1), (x - 1, y), (x + 1, y), (x, y + 1))
-    return [candidate for candidate in candidates if candidate in pixels]
+def _path_length(points: list[Point]) -> float:
+    if len(points) < 2:
+        return 0.0
+    total = 0.0
+    for a, b in zip(points, points[1:]):
+        total += math.hypot(b[0] - a[0], b[1] - a[1])
+    return total
+
+
+def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
+    if min_area <= 1:
+        return mask.astype(bool)
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+    if count <= 1:
+        return mask.astype(bool)
+    keep = np.zeros_like(mask, dtype=bool)
+    for label in range(1, count):
+        if stats[label, cv2.CC_STAT_AREA] >= min_area:
+            keep |= labels == label
+    return keep
 
 
 def _edge_key(a: tuple[int, int], b: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -95,7 +111,8 @@ def rdp(points: list[Point], epsilon: float) -> list[Point]:
         if line_len == 0:
             dist = np.linalg.norm(point - start)
         else:
-            dist = abs(np.cross(line, start - point)) / line_len
+            delta = start - point
+            dist = abs(line[0] * delta[1] - line[1] * delta[0]) / line_len
         if dist > max_dist:
             max_dist = float(dist)
             index = i
@@ -123,7 +140,7 @@ def prune_short_terminal_branches(skeleton: np.ndarray, max_branch_length: int, 
         return skeleton.astype(bool)
 
     for _pass in range(max_passes):
-        degree = {pixel: len(_neighbors4(pixel, pixels)) for pixel in pixels}
+        degree = {pixel: len(_neighbors(pixel, pixels)) for pixel in pixels}
         endpoints = sorted((pixel for pixel, deg in degree.items() if deg == 1), key=lambda item: (item[1], item[0]))
         to_remove: set[tuple[int, int]] = set()
 
@@ -140,7 +157,7 @@ def prune_short_terminal_branches(skeleton: np.ndarray, max_branch_length: int, 
                     terminal_degree = degree[cur]
                     if terminal_degree != 2:
                         break
-                candidates = [item for item in _neighbors4(cur, pixels) if item != prev]
+                candidates = [item for item in _neighbors(cur, pixels) if item != prev]
                 if not candidates:
                     break
                 nxt = candidates[0]
@@ -171,6 +188,8 @@ def generate_strokes(
     mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
     spur_prune_length: int = 8,
+    min_component_area: int = 12,
+    min_stroke_length_px: float = 6.0,
 ) -> list[Stroke]:
     mask = image_to_mask(image, threshold=alpha_threshold)
     if not mask.any():
@@ -183,6 +202,9 @@ def generate_strokes(
         mask = cv2.erode(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_erosion_iterations)) > 0
         if not mask.any():
             return []
+    mask = _remove_small_components(mask, min_component_area)
+    if not mask.any():
+        return []
 
     skeleton = prune_short_terminal_branches(skeletonize(mask), spur_prune_length)
     count, labels = cv2.connectedComponents(skeleton.astype(np.uint8), 8)
@@ -205,7 +227,7 @@ def generate_strokes(
                     raw = _trace_from_node(node, nxt, pixels, nodes, visited_edges)
                     points = [(float(x), float(y)) for x, y in raw]
                     points = rdp(points, simplify_epsilon)
-                    if len(points) >= min_points:
+                    if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
                         strokes.append(Stroke(points=points, closed=False))
         else:
             visited: set[tuple[int, int]] = set()
@@ -215,7 +237,7 @@ def generate_strokes(
                 raw = _trace_loop(pixel, pixels, visited)
                 points = [(float(x), float(y)) for x, y in raw]
                 points = rdp(points, simplify_epsilon)
-                if len(points) >= min_points:
+                if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
                     strokes.append(Stroke(points=points, closed=True))
 
     return sorted(strokes, key=lambda stroke: (stroke.points[0][1], stroke.points[0][0]))

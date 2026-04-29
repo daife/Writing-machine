@@ -66,6 +66,8 @@ class StrokeConfig:
     mask_dilation_iterations: int = 0
     mask_erosion_iterations: int = 0
     spur_prune_length: int = 8
+    min_component_area: int = 12
+    min_stroke_length_px: float = 6.0
 
 
 @dataclass
