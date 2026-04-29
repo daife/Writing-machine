@@ -41,12 +41,13 @@ class MachineConfig:
     origin_y_mm: float = 0.0
     invert_x: bool = False
     invert_y: bool = False
-    travel_feed: int = 2500
-    write_feed: int = 1500
-    pen_down: str = "M3S1000"
-    pen_up: str = "M5"
-    dwell_seconds: float = 0.2
+    travel_feed: int = 4000
+    write_feed: int = 4000
+    pen_down: str = "G1G90 Z4.0F10000"
+    pen_up: str = "G1G90 Z0.0F10000"
+    dwell_seconds: float = 0.0
     return_home: bool = True
+    set_work_zero: bool = True
 
 
 @dataclass
@@ -101,6 +102,19 @@ class ProjectState:
         state.layers = [AnswerLayer(**item) for item in data.get("layers", [])]
         if data.get("machine"):
             state.machine = MachineConfig(**data["machine"])
+            legacy_grbl_defaults = (
+                state.machine.travel_feed == 2500
+                and state.machine.write_feed == 1500
+                and state.machine.pen_down == "M3S1000"
+                and state.machine.pen_up == "M5"
+                and abs(state.machine.dwell_seconds - 0.2) < 0.0001
+            )
+            if legacy_grbl_defaults:
+                state.machine.travel_feed = 4000
+                state.machine.write_feed = 4000
+                state.machine.pen_down = "G1G90 Z4.0F10000"
+                state.machine.pen_up = "G1G90 Z0.0F10000"
+                state.machine.dwell_seconds = 0.0
         if data.get("serial_proxy"):
             state.serial_proxy = SerialProxyConfig(**data["serial_proxy"])
         if data.get("stroke"):

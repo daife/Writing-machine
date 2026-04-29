@@ -328,11 +328,12 @@ MachineConfig {
   origin_y_mm: 0
   invert_x: false
   invert_y: false
-  travel_feed: 2500
-  write_feed: 1500
-  pen_down: "M3S1000"
-  pen_up: "M5"
-  dwell_seconds: 0.2
+  travel_feed: 4000
+  write_feed: 4000
+  pen_down: "G1G90 Z4.0F10000"
+  pen_up: "G1G90 Z0.0F10000"
+  dwell_seconds: 0.0
+  set_work_zero: true
 }
 ```
 
@@ -345,7 +346,22 @@ x_mm = x_px / 10
 y_mm = y_px / 10
 ```
 
-如果机器坐标方向和图像坐标方向不同，则在模块 5 里处理：
+官方软件把纸面左上角附近的点输出为机器坐标中的负 Y，因此最终机器坐标为：
+
+```text
+machine_x = x_mm
+machine_y = -y_mm
+```
+
+如果启用对角原点/180 度模式，先在纸面坐标内按纸张宽高旋转 180 度，再输出机器坐标：
+
+```text
+x_mm = width_mm - x_mm
+y_mm = height_mm - y_mm
+machine_y = -y_mm
+```
+
+如果机器坐标方向和图像坐标方向仍不同，则在模块 5 里额外处理：
 
 ```text
 if invert_x:
@@ -360,14 +376,12 @@ if invert_y:
 每一条 stroke 建议转换为：
 
 ```gcode
-G0 X{start_x}Y{start_y}F2500
-M3S1000
-G4 P0.2
-G1 X{x1}Y{y1}F1500
-G1 X{x2}Y{y2}F1500
+G0 X{start_x}Y{start_y}F4000
+G1G90 Z4.0F10000
+G1 X{x1}Y{y1}F4000
+G1 X{x2}Y{y2}F4000
 ...
-M5
-G4 P0.2
+G1G90 Z0.0F10000
 ```
 
 初始化建议：
@@ -375,7 +389,7 @@ G4 P0.2
 ```gcode
 G21
 G90
-M5
+G1G90 Z0.0F10000
 ```
 
 可选设置工作零点：
@@ -387,7 +401,7 @@ G10 P0 L20 X0Y0Z0
 结束建议：
 
 ```gcode
-M5
+G1G90 Z0.0F10000
 G90G0 X0Y0
 ```
 
@@ -406,10 +420,10 @@ G90G0 X0Y0
 
 建议分两级：
 
-1. 软件暂停：停止继续发送新 G-code，等待当前命令完成后发送 `M5` 抬笔。
+1. 软件暂停：停止继续发送新 G-code，等待当前命令完成后发送抬笔命令。
 2. GRBL feed hold：发送 `!`，让 GRBL 立即暂停运动。
 
-从前一次抓包看，官方软件暂停更像是停止继续下发并发送 `M5`，没有明确看到 `!` 和 `~`。因此第一版建议先做软件暂停，更可控。
+从前一次抓包看，官方软件暂停更像是停止继续下发并发送抬笔命令，没有明确看到 `!` 和 `~`。因此第一版建议先做软件暂停，更可控。
 
 ### 继续
 
@@ -424,7 +438,7 @@ G90G0 X0Y0
 
 ```text
 停止发送队列
-发送 M5 抬笔
+发送抬笔命令
 可选发送 0x18 soft reset
 可选回原点 G90G0 X0Y0
 ```
@@ -432,7 +446,7 @@ G90G0 X0Y0
 如果机器正在运动中，最安全的终止策略通常是：
 
 1. 发送 `!` 暂停。
-2. 发送 `M5` 或 reset 后保证抬笔。
+2. 发送抬笔命令或 reset 后保证抬笔。
 3. 清理软件队列。
 4. 用户确认后再回原点。
 
@@ -476,4 +490,3 @@ execution_log.txt                    # 串口执行日志
 ```
 
 只要这两个接口稳定，后面 UI、算法、写字机型号都可以独立替换。
-

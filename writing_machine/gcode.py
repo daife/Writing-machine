@@ -22,7 +22,7 @@ def pixel_to_mm(
         x_mm = reference.width_mm - x_mm
     if config.invert_y:
         y_mm = reference.height_mm - y_mm
-    return x_mm + config.origin_x_mm, y_mm + config.origin_y_mm
+    return x_mm + config.origin_x_mm, config.origin_y_mm - y_mm
 
 
 def strokes_to_gcode(
@@ -35,11 +35,9 @@ def strokes_to_gcode(
 ) -> list[str]:
     lines: list[str] = []
     if include_header:
-        lines.extend(["G21", "G90", config.pen_up])
-        if diagonal_origin_180:
-            x_mm = reference.width_mm + config.origin_x_mm
-            y_mm = reference.height_mm + config.origin_y_mm
-            lines.append(f"G0 X{x_mm:.3f}Y{y_mm:.3f}F{config.travel_feed}")
+        if config.set_work_zero:
+            lines.append("G10 P0 L20 X0.0Y0.0Z0")
+        lines.extend(["G21", "G90", f"F{config.travel_feed}", config.pen_up, config.pen_up])
 
     for stroke in strokes:
         if len(stroke.points) < 2:
@@ -53,12 +51,14 @@ def strokes_to_gcode(
         )
         lines.append(f"G0 X{start_x:.3f}Y{start_y:.3f}F{config.travel_feed}")
         lines.append(config.pen_down)
-        lines.append(f"G4 P{config.dwell_seconds:.3f}")
+        if config.dwell_seconds > 0:
+            lines.append(f"G4 P{config.dwell_seconds:.3f}")
         for point in stroke.points[1:]:
             x_mm, y_mm = pixel_to_mm(point[0], point[1], reference, config, diagonal_origin_180=diagonal_origin_180)
             lines.append(f"G1 X{x_mm:.3f}Y{y_mm:.3f}F{config.write_feed}")
         lines.append(config.pen_up)
-        lines.append(f"G4 P{config.dwell_seconds:.3f}")
+        if config.dwell_seconds > 0:
+            lines.append(f"G4 P{config.dwell_seconds:.3f}")
 
     if include_footer:
         lines.append(config.pen_up)
