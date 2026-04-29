@@ -146,8 +146,7 @@ class WritingMachineApp:
                 "画布操作：\n"
                 "Ctrl+V：粘贴剪切板图片作为底图\n"
                 "拖入图片文件：导入为底图\n"
-                "点击画布：依次选择左上、右上、右下、左下角点\n"
-                "角点选满后再次点击：清空并重新选择"
+                "点击画布：依次选择左上、右上、右下、左下角点"
             ),
             wraplength=220,
         ).pack(anchor="w")
@@ -364,8 +363,8 @@ class WritingMachineApp:
         ).pack(anchor="w", pady=8)
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
         ttk.Button(left, text="从透明字迹图生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
-        ttk.Button(left, text="加载 strokes.json", command=self.load_strokes_json).pack(fill="x", pady=3)
-        ttk.Button(left, text="导出 G-code", command=self.export_gcode).pack(fill="x", pady=3)
+        ttk.Button(left, text="加载 自定义轨迹strokes.json", command=self.load_strokes_json).pack(fill="x", pady=3)
+        ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         self.stroke_info_var = tk.StringVar(value="尚未生成轨迹")
         ttk.Label(left, textvariable=self.stroke_info_var, wraplength=240).pack(anchor="w", pady=12)
 
@@ -454,7 +453,7 @@ class WritingMachineApp:
             command=self.on_trajectory_mode_toggle,
         ).pack(anchor="w", pady=3)
         ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var).pack(anchor="w", pady=8)
-        ttk.Button(left, text="生成/刷新 G-code", command=self.export_gcode).pack(fill="x", pady=3)
+        ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         ttk.Button(left, text="开始", command=self.start_execution).pack(fill="x", pady=10)
         ttk.Button(left, text="暂停", command=self.pause_execution).pack(fill="x", pady=3)
         ttk.Button(left, text="继续", command=self.resume_execution).pack(fill="x", pady=3)
@@ -1435,7 +1434,7 @@ class WritingMachineApp:
             diagonal_origin_180=bool(self.rotate_trajectory_180_var.get()),
         )
         path = save_gcode(self.gcode_lines, self.artifacts / "job.gcode")
-        self.log(f"G-code 已导出：{path}，共 {len(self.gcode_lines)} 行。")
+        self.log(f"G-code 已生成：{path}，共 {len(self.gcode_lines)} 行。")
 
     def start_execution(self) -> None:
         if not self.gcode_lines:
