@@ -200,6 +200,12 @@ class WritingMachineApp:
         ttk.Button(left, text="确认透视变换", command=self.confirm_reference).pack(fill="x", pady=16)
         ttk.Button(left, text="保存当前底图配置", command=self.save_reference_config).pack(fill="x", pady=3)
         ttk.Button(left, text="加载底图配置", command=self.load_reference_config).pack(fill="x", pady=3)
+        clear_cache_button = ttk.Button(left, text="清理缓存文件", command=self.clear_artifact_cache)
+        clear_cache_button.pack(fill="x", pady=(12, 3))
+        self.add_tooltip(
+            clear_cache_button,
+            "删除 artifacts 根目录中未被当前项目引用的临时图片、融合图、轨迹和 G-code。不会删除 project.json、底图配置目录、当前底图和当前图层图片。",
+        )
         ttk.Label(
             left,
             text=(
@@ -655,6 +661,39 @@ class WritingMachineApp:
             messagebox.showwarning("缺少底图", "请先在模块 1 生成参考底图。")
             return None
         return self.state.reference
+
+    def clear_artifact_cache(self) -> None:
+        if not messagebox.askyesno("清理缓存", "将删除未被当前项目引用的临时文件，但保留配置文件、底图配置、当前底图和当前图层图片。是否继续？"):
+            return
+        protected: set[Path] = {(self.artifacts / "project.json").resolve()}
+        if self.state.reference and self.state.reference.image_path:
+            protected.add(Path(self.state.reference.image_path).resolve())
+        for layer in self.state.layers:
+            if layer.source_path:
+                protected.add(Path(layer.source_path).resolve())
+        if self.generated_text_path:
+            protected.add(Path(self.generated_text_path).resolve())
+
+        deleted = 0
+        skipped = 0
+        for path in self.artifacts.iterdir():
+            try:
+                if path.name == "references":
+                    skipped += 1
+                    continue
+                if path.resolve() in protected:
+                    skipped += 1
+                    continue
+                if path.is_file() and path.suffix.lower() in {".png", ".json", ".gcode"}:
+                    path.unlink()
+                    deleted += 1
+                else:
+                    skipped += 1
+            except Exception as exc:
+                self.log(f"缓存文件删除失败：{path}，{exc}")
+        if not (self.artifacts / "handwriting_merged.png").exists():
+            self.gcode_lines = []
+        messagebox.showinfo("清理完成", f"已删除 {deleted} 个缓存文件，保留 {skipped} 项。")
 
     def register_file_drop(self, widget: tk.Widget, callback) -> None:
         if DND_FILES is None or not hasattr(widget, "drop_target_register"):
