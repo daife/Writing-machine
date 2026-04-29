@@ -168,12 +168,16 @@ def generate_strokes(
     simplify_epsilon: float = 2.0,
     min_points: int = 2,
     alpha_threshold: int = 20,
+    mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
     spur_prune_length: int = 8,
 ) -> list[Stroke]:
     mask = image_to_mask(image, threshold=alpha_threshold)
     if not mask.any():
         return []
+    if mask_dilation_iterations > 0:
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        mask = cv2.dilate(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_dilation_iterations)) > 0
     if mask_erosion_iterations > 0:
         kernel = np.ones((3, 3), dtype=np.uint8)
         mask = cv2.erode(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_erosion_iterations)) > 0

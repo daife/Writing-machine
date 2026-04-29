@@ -80,6 +80,54 @@ class PreviewCanvas(tk.Canvas):
         return self.offset_x + x * self.scale, self.offset_y + y * self.scale
 
 
+class ToolTip:
+    def __init__(self, widget: tk.Widget, text: str, delay_ms: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._after_id: str | None = None
+        self._tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self.schedule, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+
+    def schedule(self, _event=None) -> None:
+        self.cancel()
+        self._after_id = self.widget.after(self.delay_ms, self.show)
+
+    def cancel(self) -> None:
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def show(self) -> None:
+        if self._tip is not None:
+            return
+        x = self.widget.winfo_rootx() + 18
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)
+        self._tip.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            self._tip,
+            text=self.text,
+            justify="left",
+            background="#ffffe8",
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=5,
+            wraplength=320,
+        )
+        label.pack()
+
+    def hide(self, _event=None) -> None:
+        self.cancel()
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+
 class WritingMachineApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -97,12 +145,14 @@ class WritingMachineApp:
         self._erase_points: list[tuple[float, float]] = []
         self.undo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
         self.redo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
+        self.tooltips: list[ToolTip] = []
 
         self._build_ui()
         self.root.bind_all("<Control-z>", self.undo)
         self.root.bind_all("<Control-y>", self.redo)
         self.root.bind_all("<Control-v>", self.on_global_paste)
         self.root.bind_all("<Control-V>", self.on_global_paste)
+        self.sync_ui_from_state()
         self.refresh_layer_list()
         self.refresh_layers_preview()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -131,12 +181,22 @@ class WritingMachineApp:
         ttk.Button(left, text="垂直翻转", command=self.flip_reference_v).pack(fill="x", pady=3)
         ttk.Button(left, text="清空角点", command=self.clear_reference_points).pack(fill="x", pady=3)
 
-        ttk.Label(left, text="真实宽度 mm").pack(anchor="w", pady=(16, 2))
+        width_label = ttk.Label(left, text="真实宽度 mm")
+        width_label.pack(anchor="w", pady=(16, 2))
         self.width_mm_var = tk.StringVar(value="210")
-        ttk.Entry(left, textvariable=self.width_mm_var).pack(fill="x")
-        ttk.Label(left, text="真实高度 mm").pack(anchor="w", pady=(8, 2))
+        width_entry = ttk.Entry(left, textvariable=self.width_mm_var)
+        width_entry.pack(fill="x")
+        width_tip = "在点击“确认透视变换”时生效。用于把底图透视校正成真实纸张比例，并决定后续像素到毫米的换算。"
+        self.add_tooltip(width_label, width_tip)
+        self.add_tooltip(width_entry, width_tip)
+        height_label = ttk.Label(left, text="真实高度 mm")
+        height_label.pack(anchor="w", pady=(8, 2))
         self.height_mm_var = tk.StringVar(value="297")
-        ttk.Entry(left, textvariable=self.height_mm_var).pack(fill="x")
+        height_entry = ttk.Entry(left, textvariable=self.height_mm_var)
+        height_entry.pack(fill="x")
+        height_tip = "在点击“确认透视变换”时生效。用于把底图透视校正成真实纸张比例，并决定后续写字坐标的毫米尺寸。"
+        self.add_tooltip(height_label, height_tip)
+        self.add_tooltip(height_entry, height_tip)
         ttk.Button(left, text="确认透视变换", command=self.confirm_reference).pack(fill="x", pady=16)
         ttk.Button(left, text="保存当前底图配置", command=self.save_reference_config).pack(fill="x", pady=3)
         ttk.Button(left, text="加载底图配置", command=self.load_reference_config).pack(fill="x", pady=3)
@@ -184,7 +244,6 @@ class WritingMachineApp:
 
         ttk.Button(left, text="导入答案图片图层", command=self.add_answer_layer).pack(fill="x", pady=3)
         ttk.Button(left, text="删除当前图层", command=self.delete_current_layer).pack(fill="x", pady=3)
-        ttk.Button(left, text="刷新预览", command=self.refresh_layers_preview).pack(fill="x", pady=3)
         ttk.Button(left, text="融合并导出透明字迹图", command=self.export_merged_handwriting).pack(fill="x", pady=12)
 
         self.layer_list = tk.Listbox(left, height=7, exportselection=False)
@@ -208,30 +267,23 @@ class WritingMachineApp:
         ).pack(anchor="w", pady=(8, 6))
 
         self.layer_vars = {
-            "x": tk.DoubleVar(value=0),
-            "y": tk.DoubleVar(value=0),
-            "scale": tk.DoubleVar(value=1),
-            "rotation_deg": tk.DoubleVar(value=0),
-            "threshold": tk.IntVar(value=120),
-            "crop_left": tk.IntVar(value=0),
-            "crop_top": tk.IntVar(value=0),
-            "crop_right": tk.IntVar(value=0),
-            "crop_bottom": tk.IntVar(value=0),
-            "erosion_iterations": tk.IntVar(value=0),
+            "min_area": tk.IntVar(value=5),
         }
-        self._add_layer_control(left, "X", "x", -2000, 4000, 1)
-        self._add_layer_control(left, "Y", "y", -2000, 4000, 1)
-        self._add_layer_control(left, "缩放", "scale", 0.05, 5.0, 0.01)
-        self._add_layer_control(left, "旋转角度", "rotation_deg", -180, 180, 0.1)
-        self._add_layer_control(left, "黑色阈值", "threshold", 0, 255, 1)
-        self._add_layer_control(left, "裁左", "crop_left", 0, 2000, 1)
-        self._add_layer_control(left, "裁上", "crop_top", 0, 2000, 1)
-        self._add_layer_control(left, "裁右", "crop_right", 0, 2000, 1)
-        self._add_layer_control(left, "裁下", "crop_bottom", 0, 2000, 1)
-        self._add_layer_control(left, "腐蚀次数", "erosion_iterations", 0, 5, 1)
-        ttk.Label(left, text="橡皮擦半径 px").pack(anchor="w", pady=(7, 0))
-        self.eraser_radius_var = tk.IntVar(value=18)
-        ttk.Spinbox(left, from_=2, to=200, increment=1, textvariable=self.eraser_radius_var).pack(fill="x")
+        eraser_label = ttk.Label(left, text="橡皮擦半径 px")
+        eraser_label.pack(anchor="w", pady=(7, 0))
+        self.eraser_radius_var = tk.IntVar(value=self.state.eraser_radius)
+        self.eraser_radius_var.trace_add("write", lambda *_args: self.save_eraser_radius())
+        eraser_spin = ttk.Spinbox(left, from_=2, to=200, increment=1, textvariable=self.eraser_radius_var)
+        eraser_spin.pack(fill="x")
+        eraser_tip = "在模块2画布左键拖动橡皮擦时生效。数值越大，一次擦除的透明圆形范围越大；会自动保存到项目配置。"
+        self.add_tooltip(eraser_label, eraser_tip)
+        self.add_tooltip(eraser_spin, eraser_tip)
+        ttk.Label(
+            left,
+            text="以下是手动导入答案图片图层参数（非模块4文本转字迹得到）：",
+            wraplength=230,
+        ).pack(anchor="w", pady=(12, 0))
+        self._add_layer_control(left, "最小连通域", "min_area", 1, 5000, 1)
 
         self.layers_canvas = PreviewCanvas(right, width=880, height=680)
         self.layers_canvas.pack(fill="both", expand=True)
@@ -249,11 +301,52 @@ class WritingMachineApp:
         self._layer_mouse_start: dict[str, object] | None = None
 
     def _add_layer_control(self, parent: ttk.Frame, label: str, key: str, min_v: float, max_v: float, increment: float) -> None:
-        ttk.Label(parent, text=label).pack(anchor="w", pady=(7, 0))
+        tooltip = ""
+        if key == "min_area":
+            tooltip = "仅对手动导入的答案图片图层生效。白底透明化后，会删除面积小于该值的黑色连通域，用来过滤扫描噪点和小黑点；模块4生成的字迹图不受影响。"
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.pack(anchor="w", pady=(7, 0))
         spin = ttk.Spinbox(parent, from_=min_v, to=max_v, increment=increment, textvariable=self.layer_vars[key], command=self.update_current_layer)
         spin.pack(fill="x")
         spin.bind("<Return>", lambda _event: self.update_current_layer())
         spin.bind("<FocusOut>", lambda _event: self.update_current_layer())
+        if tooltip:
+            self.add_tooltip(label_widget, tooltip)
+            self.add_tooltip(spin, tooltip)
+
+    def add_tooltip(self, widget: tk.Widget, text: str) -> None:
+        self.tooltips.append(ToolTip(widget, text))
+
+    def save_eraser_radius(self) -> None:
+        if not hasattr(self, "eraser_radius_var"):
+            return
+        try:
+            self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
+
+    def save_stroke_config_from_ui(self) -> None:
+        required = (
+            "epsilon_var",
+            "stroke_alpha_threshold_var",
+            "stroke_min_points_var",
+            "mask_dilation_iterations_var",
+            "mask_erosion_iterations_var",
+            "spur_prune_length_var",
+        )
+        if not all(hasattr(self, name) for name in required):
+            return
+        try:
+            self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
+            self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
+            self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
+            self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
+            self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
 
     def make_undo_snapshot(self) -> tuple[ProjectState, list[Stroke], list[str], int | None]:
         return (
@@ -290,8 +383,11 @@ class WritingMachineApp:
             self.epsilon_var.set(self.state.stroke.simplify_epsilon)
             self.stroke_alpha_threshold_var.set(self.state.stroke.alpha_threshold)
             self.stroke_min_points_var.set(self.state.stroke.min_points)
+            self.mask_dilation_iterations_var.set(self.state.stroke.mask_dilation_iterations)
             self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
             self.spur_prune_length_var.set(self.state.stroke.spur_prune_length)
+        if hasattr(self, "eraser_radius_var"):
+            self.eraser_radius_var.set(self.state.eraser_radius)
         if hasattr(self, "port_var"):
             self.port_var.set(self.state.machine.port)
             self.baud_var.set(self.state.machine.baud)
@@ -339,28 +435,89 @@ class WritingMachineApp:
         right = ttk.Frame(tab)
         right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
-        ttk.Label(left, text="路径简化 epsilon(px)").pack(anchor="w")
-        self.epsilon_var = tk.DoubleVar(value=self.state.stroke.simplify_epsilon)
-        ttk.Spinbox(left, from_=0.1, to=20.0, increment=0.1, textvariable=self.epsilon_var).pack(fill="x")
-        ttk.Label(left, text="Alpha 阈值").pack(anchor="w", pady=(7, 0))
+        def add_stroke_spin(label: str, var: tk.Variable, from_: float, to: float, increment: float, tip: str) -> None:
+            label_widget = ttk.Label(left, text=label)
+            label_widget.pack(anchor="w", pady=(7, 0))
+            spin = ttk.Spinbox(left, from_=from_, to=to, increment=increment, textvariable=var)
+            spin.pack(fill="x")
+            self.add_tooltip(label_widget, tip)
+            self.add_tooltip(spin, tip)
+
         self.stroke_alpha_threshold_var = tk.IntVar(value=self.state.stroke.alpha_threshold)
-        ttk.Spinbox(left, from_=0, to=255, increment=1, textvariable=self.stroke_alpha_threshold_var).pack(fill="x")
-        ttk.Label(left, text="每笔最少点数").pack(anchor="w", pady=(7, 0))
-        self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
-        ttk.Spinbox(left, from_=2, to=20, increment=1, textvariable=self.stroke_min_points_var).pack(fill="x")
-        ttk.Label(left, text="轨迹腐蚀次数").pack(anchor="w", pady=(7, 0))
+        self.mask_dilation_iterations_var = tk.IntVar(value=self.state.stroke.mask_dilation_iterations)
         self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
-        ttk.Spinbox(left, from_=0, to=5, increment=1, textvariable=self.mask_erosion_iterations_var).pack(fill="x")
-        ttk.Label(left, text="毛刺剪枝长度(px)").pack(anchor="w", pady=(7, 0))
         self.spur_prune_length_var = tk.IntVar(value=self.state.stroke.spur_prune_length)
-        ttk.Spinbox(left, from_=0, to=80, increment=1, textvariable=self.spur_prune_length_var).pack(fill="x")
+        self.epsilon_var = tk.DoubleVar(value=self.state.stroke.simplify_epsilon)
+        self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
+        add_stroke_spin(
+            "Alpha 阈值",
+            self.stroke_alpha_threshold_var,
+            0,
+            255,
+            1,
+            "在“从透明字迹图生成轨迹”时生效。融合字迹图中 alpha 大于该值的像素会被视为要写的字迹区域；提高它会忽略半透明边缘。",
+        )
+        add_stroke_spin(
+            "轨迹膨胀次数",
+            self.mask_dilation_iterations_var,
+            0,
+            5,
+            1,
+            "在轨迹生成时、腐蚀之前生效。会先把字迹 mask 向外扩一圈，可连接断裂笔画或加粗细线；次数过大会粘连相邻笔画。",
+        )
+        add_stroke_spin(
+            "轨迹腐蚀次数",
+            self.mask_erosion_iterations_var,
+            0,
+            5,
+            1,
+            "在轨迹生成时、膨胀之后生效。会把字迹 mask 向内收缩，可抵消膨胀或去掉细小毛边；次数过大会吃掉细笔画。",
+        )
+        add_stroke_spin(
+            "毛刺剪枝长度(px)",
+            self.spur_prune_length_var,
+            0,
+            80,
+            1,
+            "在骨架化之后生效。会删除短的端点分支，用来去掉小毛刺；设为0表示不剪枝，过大可能删掉真实短笔画。",
+        )
+        add_stroke_spin(
+            "路径简化 epsilon(px)",
+            self.epsilon_var,
+            0.1,
+            20.0,
+            0.1,
+            "在骨架路径追踪之后生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
+        )
+        add_stroke_spin(
+            "每笔最少点数",
+            self.stroke_min_points_var,
+            2,
+            20,
+            1,
+            "在轨迹生成筛选 stroke 时生效。点数少于该值的轨迹会被丢弃，用于过滤碎点和极短噪声。",
+        )
+        for var in (
+            self.stroke_alpha_threshold_var,
+            self.mask_dilation_iterations_var,
+            self.mask_erosion_iterations_var,
+            self.spur_prune_length_var,
+            self.epsilon_var,
+            self.stroke_min_points_var,
+        ):
+            var.trace_add("write", lambda *_args: self.save_stroke_config_from_ui())
         self.rotate_trajectory_180_var = tk.BooleanVar(value=self.state.rotate_trajectory_180)
-        ttk.Checkbutton(
+        rotate_check = ttk.Checkbutton(
             left,
             text="执行时使用对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
             command=self.on_trajectory_mode_toggle,
-        ).pack(anchor="w", pady=8)
+        )
+        rotate_check.pack(anchor="w", pady=8)
+        self.add_tooltip(
+            rotate_check,
+            "在轨迹预览、G-code 生成和执行时生效。用于纸张实际旋转180度、机器从对角原点书写的场景，会同步旋转预览并镜像输出坐标。",
+        )
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
         ttk.Button(left, text="从透明字迹图生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
         ttk.Button(left, text="加载 自定义轨迹strokes.json", command=self.load_strokes_json).pack(fill="x", pady=3)
@@ -404,19 +561,44 @@ class WritingMachineApp:
             self.font_path_var,
         ):
             var.trace_add("write", lambda *_args: self.invalidate_generated_text())
+        text_entry_tips = {
+            "宽 px": "在点击“生成手写图片”时生效。决定模块4输出图片的像素宽度，影响之后加入模块2时的图层尺寸。",
+            "高 px": "在点击“生成手写图片”时生效。决定模块4输出图片的像素高度，过小会裁掉生成的文字。",
+            "字号": "在点击“生成手写图片”时生效。控制生成字迹的字体大小，数值越大字越大。",
+        }
         for label, var in [("宽 px", self.text_width_var), ("高 px", self.text_height_var), ("字号", self.font_size_var)]:
-            ttk.Label(options, text=label).pack(anchor="w")
-            ttk.Entry(options, textvariable=var, width=12).pack(fill="x", pady=(0, 6))
+            label_widget = ttk.Label(options, text=label)
+            label_widget.pack(anchor="w")
+            entry = ttk.Entry(options, textvariable=var, width=12)
+            entry.pack(fill="x", pady=(0, 6))
+            self.add_tooltip(label_widget, text_entry_tips[label])
+            self.add_tooltip(entry, text_entry_tips[label])
+        perturb_tips = {
+            "横向随机偏移": "在点击“生成手写图片”时生效。控制每个字左右随机偏移幅度，数值越大越像手写排布，但过大会挤压或错位。",
+            "纵向随机偏移": "在点击“生成手写图片”时生效。控制每个字上下随机偏移幅度，数值越大基线越不整齐。",
+            "旋转随机扰动": "在点击“生成手写图片”时生效。控制单字随机旋转幅度，数值越大字越歪，过大可能影响识别和轨迹。",
+        }
         for label, var in [
             ("横向随机偏移", self.perturb_x_var),
             ("纵向随机偏移", self.perturb_y_var),
             ("旋转随机扰动", self.perturb_theta_var),
         ]:
-            ttk.Label(options, text=label).pack(anchor="w")
-            ttk.Spinbox(options, from_=0, to=20, increment=0.1, textvariable=var, width=12).pack(fill="x", pady=(0, 6))
-        ttk.Label(options, text="随机种子").pack(anchor="w")
-        ttk.Entry(options, textvariable=self.text_seed_var, width=12).pack(fill="x", pady=(0, 6))
-        ttk.Button(options, text="选择字体", command=self.choose_font).pack(fill="x", pady=3)
+            label_widget = ttk.Label(options, text=label)
+            label_widget.pack(anchor="w")
+            spin = ttk.Spinbox(options, from_=0, to=20, increment=0.1, textvariable=var, width=12)
+            spin.pack(fill="x", pady=(0, 6))
+            self.add_tooltip(label_widget, perturb_tips[label])
+            self.add_tooltip(spin, perturb_tips[label])
+        seed_label = ttk.Label(options, text="随机种子")
+        seed_label.pack(anchor="w")
+        seed_entry = ttk.Entry(options, textvariable=self.text_seed_var, width=12)
+        seed_entry.pack(fill="x", pady=(0, 6))
+        seed_tip = "在点击“生成手写图片”时生效。相同文本、字体和参数配合同一个种子会生成一致的随机效果；换种子可得到新的字迹排布。"
+        self.add_tooltip(seed_label, seed_tip)
+        self.add_tooltip(seed_entry, seed_tip)
+        font_button = ttk.Button(options, text="选择字体", command=self.choose_font)
+        font_button.pack(fill="x", pady=3)
+        self.add_tooltip(font_button, "在点击“生成手写图片”时生效。选择用于模块4文字渲染的字体文件，不选择则使用系统默认候选字体。")
         ttk.Button(options, text="生成手写图片", command=self.generate_text_image).pack(fill="x", pady=8)
         self.add_generated_text_button = ttk.Button(options, text="加入模块2", command=self.add_generated_text_to_layers, state="disabled")
         self.add_generated_text_button.pack(fill="x", pady=3)
@@ -442,17 +624,37 @@ class WritingMachineApp:
         ttk.Button(left, text="刷新串口", command=self.refresh_ports).pack(fill="x", pady=3)
         self.port_combo = ttk.Combobox(left, textvariable=self.port_var, values=available_ports(), width=18)
         self.port_combo.pack(fill="x", pady=3)
-        ttk.Label(left, text="波特率").pack(anchor="w")
-        ttk.Entry(left, textvariable=self.baud_var).pack(fill="x")
-        ttk.Checkbutton(left, text="X 轴反向", variable=self.invert_x_var).pack(anchor="w", pady=3)
-        ttk.Checkbutton(left, text="Y 轴反向", variable=self.invert_y_var).pack(anchor="w", pady=3)
-        ttk.Checkbutton(
+        self.add_tooltip(
+            self.port_combo,
+            "在点击“开始”连接执行器时生效。选择写字机所在串口；点“刷新串口”可重新扫描可用端口。",
+        )
+        baud_label = ttk.Label(left, text="波特率")
+        baud_label.pack(anchor="w")
+        baud_entry = ttk.Entry(left, textvariable=self.baud_var)
+        baud_entry.pack(fill="x")
+        baud_tip = "在点击“开始”连接执行器时生效。必须与控制板固件串口波特率一致，常见值是115200。"
+        self.add_tooltip(baud_label, baud_tip)
+        self.add_tooltip(baud_entry, baud_tip)
+        invert_x_check = ttk.Checkbutton(left, text="X 轴反向", variable=self.invert_x_var)
+        invert_x_check.pack(anchor="w", pady=3)
+        self.add_tooltip(invert_x_check, "在生成 G-code 时生效。用于机器 X 方向与预览相反的情况，会镜像 X 坐标。")
+        invert_y_check = ttk.Checkbutton(left, text="Y 轴反向", variable=self.invert_y_var)
+        invert_y_check.pack(anchor="w", pady=3)
+        self.add_tooltip(invert_y_check, "在生成 G-code 时生效。用于机器 Y 方向与预览相反的情况，会镜像 Y 坐标。")
+        diagonal_check = ttk.Checkbutton(
             left,
             text="对角原点/XY反向",
             variable=self.rotate_trajectory_180_var,
             command=self.on_trajectory_mode_toggle,
-        ).pack(anchor="w", pady=3)
-        ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var).pack(anchor="w", pady=8)
+        )
+        diagonal_check.pack(anchor="w", pady=3)
+        self.add_tooltip(
+            diagonal_check,
+            "在轨迹预览、G-code 生成和执行时生效。用于纸张或机器坐标以对角为原点的场景，会让输出坐标等效旋转180度。",
+        )
+        dry_run_check = ttk.Checkbutton(left, text="dry-run 理论验证", variable=self.dry_run_var)
+        dry_run_check.pack(anchor="w", pady=8)
+        self.add_tooltip(dry_run_check, "在点击“开始”时生效。开启时只模拟发送流程并打印日志，不会真正向串口写入 G-code。")
         ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         ttk.Button(left, text="开始", command=self.start_execution).pack(fill="x", pady=10)
         ttk.Button(left, text="暂停", command=self.pause_execution).pack(fill="x", pady=3)
@@ -714,9 +916,7 @@ class WritingMachineApp:
         layer = AnswerLayer(source_path=path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
         if preserve_transparency:
             layer.already_extracted = True
-            layer.threshold = 255
             layer.min_area = 1
-            layer.erosion_iterations = 0
         self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()
@@ -758,7 +958,7 @@ class WritingMachineApp:
         new_values: dict[str, float | int] = {}
         for key, var in self.layer_vars.items():
             value = var.get()
-            if key.startswith("crop") or key in {"threshold", "erosion_iterations"}:
+            if key.startswith("crop") or key in {"min_area"}:
                 value = int(value)
             new_values[key] = value
             if getattr(layer, key) != value:
@@ -835,8 +1035,6 @@ class WritingMachineApp:
         layer.crop_top = 0
         layer.crop_right = 0
         layer.crop_bottom = 0
-        layer.threshold = 255
-        layer.erosion_iterations = 0
         layer.already_extracted = True
 
     def draw_layer_selection_overlay(self) -> None:
@@ -1223,8 +1421,6 @@ class WritingMachineApp:
         layer.scale = 1.0
         layer.rotation_deg = 0.0
         layer.crop_left = layer.crop_top = layer.crop_right = layer.crop_bottom = 0
-        layer.threshold = 255
-        layer.erosion_iterations = 0
         layer.already_extracted = True
         self.sync_layer_controls(layer)
 
@@ -1255,6 +1451,7 @@ class WritingMachineApp:
             self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
             self.strokes = generate_strokes(
@@ -1262,6 +1459,7 @@ class WritingMachineApp:
                 simplify_epsilon=self.state.stroke.simplify_epsilon,
                 alpha_threshold=self.state.stroke.alpha_threshold,
                 min_points=self.state.stroke.min_points,
+                mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
                 mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
                 spur_prune_length=self.state.stroke.spur_prune_length,
             )
@@ -1487,8 +1685,14 @@ class WritingMachineApp:
                 self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
             if hasattr(self, "stroke_min_points_var"):
                 self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            if hasattr(self, "mask_dilation_iterations_var"):
+                self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             if hasattr(self, "mask_erosion_iterations_var"):
                 self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
+            if hasattr(self, "spur_prune_length_var"):
+                self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            if hasattr(self, "eraser_radius_var"):
+                self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
             if hasattr(self, "text_width_var"):
                 self.state.text_render.width = int(self.text_width_var.get())
             if hasattr(self, "text_height_var"):
