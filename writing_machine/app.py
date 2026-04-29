@@ -201,7 +201,7 @@ class WritingMachineApp:
             "crop_top": tk.IntVar(value=0),
             "crop_right": tk.IntVar(value=0),
             "crop_bottom": tk.IntVar(value=0),
-            "erosion_iterations": tk.IntVar(value=1),
+            "erosion_iterations": tk.IntVar(value=0),
         }
         self._add_layer_control(left, "X", "x", -2000, 4000, 1)
         self._add_layer_control(left, "Y", "y", -2000, 4000, 1)
@@ -272,6 +272,7 @@ class WritingMachineApp:
             self.epsilon_var.set(self.state.stroke.simplify_epsilon)
             self.stroke_alpha_threshold_var.set(self.state.stroke.alpha_threshold)
             self.stroke_min_points_var.set(self.state.stroke.min_points)
+            self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
             self.spur_prune_length_var.set(self.state.stroke.spur_prune_length)
         if hasattr(self, "port_var"):
             self.port_var.set(self.state.machine.port)
@@ -329,6 +330,9 @@ class WritingMachineApp:
         ttk.Label(left, text="每笔最少点数").pack(anchor="w", pady=(7, 0))
         self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
         ttk.Spinbox(left, from_=2, to=20, increment=1, textvariable=self.stroke_min_points_var).pack(fill="x")
+        ttk.Label(left, text="轨迹腐蚀次数").pack(anchor="w", pady=(7, 0))
+        self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
+        ttk.Spinbox(left, from_=0, to=5, increment=1, textvariable=self.mask_erosion_iterations_var).pack(fill="x")
         ttk.Label(left, text="毛刺剪枝长度(px)").pack(anchor="w", pady=(7, 0))
         self.spur_prune_length_var = tk.IntVar(value=self.state.stroke.spur_prune_length)
         ttk.Spinbox(left, from_=0, to=80, increment=1, textvariable=self.spur_prune_length_var).pack(fill="x")
@@ -1180,12 +1184,14 @@ class WritingMachineApp:
             self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
             self.strokes = generate_strokes(
                 image,
                 simplify_epsilon=self.state.stroke.simplify_epsilon,
                 alpha_threshold=self.state.stroke.alpha_threshold,
                 min_points=self.state.stroke.min_points,
+                mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
                 spur_prune_length=self.state.stroke.spur_prune_length,
             )
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
@@ -1410,6 +1416,8 @@ class WritingMachineApp:
                 self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
             if hasattr(self, "stroke_min_points_var"):
                 self.state.stroke.min_points = int(self.stroke_min_points_var.get())
+            if hasattr(self, "mask_erosion_iterations_var"):
+                self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             if hasattr(self, "text_width_var"):
                 self.state.text_render.width = int(self.text_width_var.get())
             if hasattr(self, "text_height_var"):

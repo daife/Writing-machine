@@ -29,7 +29,7 @@ class AnswerLayer:
     crop_bottom: int = 0
     threshold: int = 120
     min_area: int = 5
-    erosion_iterations: int = 1
+    erosion_iterations: int = 0
     already_extracted: bool = False
     enabled: bool = True
 
@@ -55,6 +55,7 @@ class StrokeConfig:
     simplify_epsilon: float = 2.0
     alpha_threshold: int = 20
     min_points: int = 2
+    mask_erosion_iterations: int = 0
     spur_prune_length: int = 8
 
 

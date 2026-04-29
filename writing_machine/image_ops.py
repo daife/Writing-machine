@@ -92,7 +92,7 @@ def extract_black_handwriting(
     threshold: int = 120,
     min_area: int = 5,
     alpha_blur: float = 0.0,
-    erosion_iterations: int = 1,
+    erosion_iterations: int = 0,
 ) -> Image.Image:
     rgba = image.convert("RGBA")
     rgb = np.array(rgba.convert("RGB"))
@@ -106,6 +106,19 @@ def extract_black_handwriting(
     alpha = Image.fromarray(mask, "L")
     black = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
     black.putalpha(alpha)
+    return black
+
+
+def render_black_on_transparent(image: Image.Image, white_threshold: int = 245) -> Image.Image:
+    rgba = image.convert("RGBA")
+    rgb = np.array(rgba.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.int16)
+    source_alpha = np.array(rgba.getchannel("A"), dtype=np.int16)
+    opacity = np.clip(white_threshold - gray, 0, white_threshold)
+    opacity = (opacity * 255 / max(1, white_threshold)).astype(np.uint8)
+    opacity = ((opacity.astype(np.int16) * source_alpha) / 255).astype(np.uint8)
+    black = Image.new("RGBA", rgba.size, (0, 0, 0, 0))
+    black.putalpha(Image.fromarray(opacity, "L"))
     return black
 
 
