@@ -393,14 +393,14 @@ class WritingMachineApp:
             self.baud_var.set(self.state.machine.baud)
             self.invert_x_var.set(self.state.machine.invert_x)
             self.invert_y_var.set(self.state.machine.invert_y)
-        if hasattr(self, "text_width_var"):
-            self.text_width_var.set(self.state.text_render.width)
-            self.text_height_var.set(self.state.text_render.height)
+            self.dry_run_var.set(self.state.machine.dry_run)
+        if hasattr(self, "text_line_width_var"):
+            self.text_line_width_var.set(self.state.text_render.line_width)
             self.font_size_var.set(self.state.text_render.font_size)
-            self.perturb_x_var.set(self.state.text_render.perturb_x_sigma)
-            self.perturb_y_var.set(self.state.text_render.perturb_y_sigma)
-            self.perturb_theta_var.set(self.state.text_render.perturb_theta_sigma)
-            self.text_seed_var.set(self.state.text_render.seed)
+            self.char_spacing_var.set(self.state.text_render.char_spacing)
+            self.text_line_spacing_var.set(self.state.text_render.line_spacing)
+            self.text_min_area_var.set(self.state.text_render.min_area)
+            self.font_path_var.set(self.state.text_render.font_path or default_font_path())
         self.refresh_layer_list()
         if self.state.layers:
             index = min(max(selected_index or 0, 0), len(self.state.layers) - 1)
@@ -542,63 +542,47 @@ class WritingMachineApp:
         self.text_input.bind("<KeyRelease>", self.invalidate_generated_text)
         options = ttk.Frame(top)
         options.pack(side="right", fill="y")
-        self.text_width_var = tk.IntVar(value=self.state.text_render.width)
-        self.text_height_var = tk.IntVar(value=self.state.text_render.height)
+        self.text_line_width_var = tk.IntVar(value=self.state.text_render.line_width)
         self.font_size_var = tk.IntVar(value=self.state.text_render.font_size)
-        self.perturb_x_var = tk.DoubleVar(value=self.state.text_render.perturb_x_sigma)
-        self.perturb_y_var = tk.DoubleVar(value=self.state.text_render.perturb_y_sigma)
-        self.perturb_theta_var = tk.DoubleVar(value=self.state.text_render.perturb_theta_sigma)
-        self.text_seed_var = tk.IntVar(value=self.state.text_render.seed)
-        self.font_path_var = tk.StringVar(value=default_font_path())
+        self.char_spacing_var = tk.IntVar(value=self.state.text_render.char_spacing)
+        self.text_line_spacing_var = tk.IntVar(value=self.state.text_render.line_spacing)
+        self.text_min_area_var = tk.IntVar(value=self.state.text_render.min_area)
+        self.font_path_var = tk.StringVar(value=self.state.text_render.font_path or default_font_path())
         for var in (
-            self.text_width_var,
-            self.text_height_var,
+            self.text_line_width_var,
             self.font_size_var,
-            self.perturb_x_var,
-            self.perturb_y_var,
-            self.perturb_theta_var,
-            self.text_seed_var,
+            self.char_spacing_var,
+            self.text_line_spacing_var,
+            self.text_min_area_var,
             self.font_path_var,
         ):
-            var.trace_add("write", lambda *_args: self.invalidate_generated_text())
+            var.trace_add("write", lambda *_args: self.on_text_render_config_change())
         text_entry_tips = {
-            "宽 px": "在点击“生成手写图片”时生效。决定模块4输出图片的像素宽度，影响之后加入模块2时的图层尺寸。",
-            "高 px": "在点击“生成手写图片”时生效。决定模块4输出图片的像素高度，过小会裁掉生成的文字。",
             "字号": "在点击“生成手写图片”时生效。控制生成字迹的字体大小，数值越大字越大。",
+            "字距 px": "在点击“生成手写图片”时生效。控制同一行相邻字符之间的额外距离，数值越大字越疏。",
+            "行距 px": "在点击“生成手写图片”时生效。控制相邻两行之间的额外距离，数值越大行越疏。",
+            "行宽 px": "在点击“生成手写图片”时生效。控制自动换行的最大行宽，最终图片宽度会按该值和边距自动生成。",
+            "最小连通域": "仅对模块4生成的字迹图生效，不与模块2的“最小连通域”共用。二值化白底透明后，会删除面积小于该值的黑色连通区域。",
         }
-        for label, var in [("宽 px", self.text_width_var), ("高 px", self.text_height_var), ("字号", self.font_size_var)]:
+        for label, var in [
+            ("字号", self.font_size_var),
+            ("字距 px", self.char_spacing_var),
+            ("行距 px", self.text_line_spacing_var),
+            ("行宽 px", self.text_line_width_var),
+            ("最小连通域", self.text_min_area_var),
+        ]:
             label_widget = ttk.Label(options, text=label)
             label_widget.pack(anchor="w")
             entry = ttk.Entry(options, textvariable=var, width=12)
             entry.pack(fill="x", pady=(0, 6))
             self.add_tooltip(label_widget, text_entry_tips[label])
             self.add_tooltip(entry, text_entry_tips[label])
-        perturb_tips = {
-            "横向随机偏移": "在点击“生成手写图片”时生效。控制每个字左右随机偏移幅度，数值越大越像手写排布，但过大会挤压或错位。",
-            "纵向随机偏移": "在点击“生成手写图片”时生效。控制每个字上下随机偏移幅度，数值越大基线越不整齐。",
-            "旋转随机扰动": "在点击“生成手写图片”时生效。控制单字随机旋转幅度，数值越大字越歪，过大可能影响识别和轨迹。",
-        }
-        for label, var in [
-            ("横向随机偏移", self.perturb_x_var),
-            ("纵向随机偏移", self.perturb_y_var),
-            ("旋转随机扰动", self.perturb_theta_var),
-        ]:
-            label_widget = ttk.Label(options, text=label)
-            label_widget.pack(anchor="w")
-            spin = ttk.Spinbox(options, from_=0, to=20, increment=0.1, textvariable=var, width=12)
-            spin.pack(fill="x", pady=(0, 6))
-            self.add_tooltip(label_widget, perturb_tips[label])
-            self.add_tooltip(spin, perturb_tips[label])
-        seed_label = ttk.Label(options, text="随机种子")
-        seed_label.pack(anchor="w")
-        seed_entry = ttk.Entry(options, textvariable=self.text_seed_var, width=12)
-        seed_entry.pack(fill="x", pady=(0, 6))
-        seed_tip = "在点击“生成手写图片”时生效。相同文本、字体和参数配合同一个种子会生成一致的随机效果；换种子可得到新的字迹排布。"
-        self.add_tooltip(seed_label, seed_tip)
-        self.add_tooltip(seed_entry, seed_tip)
         font_button = ttk.Button(options, text="选择字体", command=self.choose_font)
         font_button.pack(fill="x", pady=3)
         self.add_tooltip(font_button, "在点击“生成手写图片”时生效。选择用于模块4文字渲染的字体文件，不选择则使用系统默认候选字体。")
+        default_font_button = ttk.Button(options, text="使用系统默认字体", command=self.use_default_font)
+        default_font_button.pack(fill="x", pady=3)
+        self.add_tooltip(default_font_button, "把模块4字体切回系统默认候选字体。适合在选择过自己的字体后恢复默认字体。")
         ttk.Button(options, text="生成手写图片", command=self.generate_text_image).pack(fill="x", pady=8)
         self.add_generated_text_button = ttk.Button(options, text="加入模块2", command=self.add_generated_text_to_layers, state="disabled")
         self.add_generated_text_button.pack(fill="x", pady=3)
@@ -619,7 +603,9 @@ class WritingMachineApp:
         self.baud_var = tk.IntVar(value=self.state.machine.baud)
         self.invert_x_var = tk.BooleanVar(value=self.state.machine.invert_x)
         self.invert_y_var = tk.BooleanVar(value=self.state.machine.invert_y)
-        self.dry_run_var = tk.BooleanVar(value=True)
+        self.dry_run_var = tk.BooleanVar(value=self.state.machine.dry_run)
+        for var in (self.port_var, self.baud_var, self.invert_x_var, self.invert_y_var, self.dry_run_var):
+            var.trace_add("write", lambda *_args: self.save_machine_config_from_ui())
 
         ttk.Button(left, text="刷新串口", command=self.refresh_ports).pack(fill="x", pady=3)
         self.port_combo = ttk.Combobox(left, textvariable=self.port_var, values=available_ports(), width=18)
@@ -1554,10 +1540,28 @@ class WritingMachineApp:
         if path:
             self.font_path_var.set(path)
 
+    def use_default_font(self) -> None:
+        self.font_path_var.set(default_font_path())
+
     def invalidate_generated_text(self, _event=None) -> None:
         self.generated_text_path = None
         if hasattr(self, "add_generated_text_button"):
             self.add_generated_text_button.configure(state="disabled")
+
+    def on_text_render_config_change(self) -> None:
+        self.invalidate_generated_text()
+        if not hasattr(self, "text_line_width_var"):
+            return
+        try:
+            self.state.text_render.line_width = max(1, int(self.text_line_width_var.get()))
+            self.state.text_render.font_size = max(1, int(self.font_size_var.get()))
+            self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
+            self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
+            self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
+            self.state.text_render.font_path = self.font_path_var.get()
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
 
     def generate_text_image(self) -> None:
         text = self.text_input.get("1.0", "end").strip()
@@ -1565,25 +1569,22 @@ class WritingMachineApp:
             messagebox.showwarning("缺少文本", "请输入要生成的文本。")
             return
         try:
-            self.state.text_render.width = int(self.text_width_var.get())
-            self.state.text_render.height = int(self.text_height_var.get())
-            self.state.text_render.font_size = int(self.font_size_var.get())
-            self.state.text_render.perturb_x_sigma = float(self.perturb_x_var.get())
-            self.state.text_render.perturb_y_sigma = float(self.perturb_y_var.get())
-            self.state.text_render.perturb_theta_sigma = float(self.perturb_theta_var.get())
-            self.state.text_render.seed = int(self.text_seed_var.get())
+            self.state.text_render.line_width = max(1, int(self.text_line_width_var.get()))
+            self.state.text_render.font_size = max(1, int(self.font_size_var.get()))
+            self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
+            self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
+            self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
+            self.state.text_render.font_path = self.font_path_var.get()
             filename = f"handright_output_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}.png"
             path = render_text(
                 text=text,
                 output_path=self.artifacts / filename,
-                width=self.state.text_render.width,
-                height=self.state.text_render.height,
                 font_path=self.font_path_var.get(),
                 font_size=self.state.text_render.font_size,
-                perturb_x_sigma=self.state.text_render.perturb_x_sigma,
-                perturb_y_sigma=self.state.text_render.perturb_y_sigma,
-                perturb_theta_sigma=self.state.text_render.perturb_theta_sigma,
-                seed=self.state.text_render.seed,
+                char_spacing=self.state.text_render.char_spacing,
+                line_spacing=self.state.text_render.line_spacing,
+                line_width=self.state.text_render.line_width,
+                min_area=self.state.text_render.min_area,
             )
             self.generated_text_path = path
             self.text_canvas.set_image(load_rgba(path))
@@ -1604,11 +1605,20 @@ class WritingMachineApp:
         config = self.state.machine
         config.port = self.port_var.get()
         config.baud = int(self.baud_var.get())
+        config.dry_run = bool(self.dry_run_var.get())
         config.invert_x = bool(self.invert_x_var.get())
         config.invert_y = bool(self.invert_y_var.get())
         self.state.machine = config
         self.state.save(self.artifacts / "project.json")
         return config
+
+    def save_machine_config_from_ui(self) -> None:
+        if not hasattr(self, "port_var"):
+            return
+        try:
+            self._machine_config_from_ui()
+        except (tk.TclError, ValueError):
+            return
 
     def refresh_ports(self) -> None:
         self.port_combo["values"] = available_ports()
@@ -1693,20 +1703,18 @@ class WritingMachineApp:
                 self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
             if hasattr(self, "eraser_radius_var"):
                 self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
-            if hasattr(self, "text_width_var"):
-                self.state.text_render.width = int(self.text_width_var.get())
-            if hasattr(self, "text_height_var"):
-                self.state.text_render.height = int(self.text_height_var.get())
+            if hasattr(self, "text_line_width_var"):
+                self.state.text_render.line_width = max(1, int(self.text_line_width_var.get()))
             if hasattr(self, "font_size_var"):
-                self.state.text_render.font_size = int(self.font_size_var.get())
-            if hasattr(self, "perturb_x_var"):
-                self.state.text_render.perturb_x_sigma = float(self.perturb_x_var.get())
-            if hasattr(self, "perturb_y_var"):
-                self.state.text_render.perturb_y_sigma = float(self.perturb_y_var.get())
-            if hasattr(self, "perturb_theta_var"):
-                self.state.text_render.perturb_theta_sigma = float(self.perturb_theta_var.get())
-            if hasattr(self, "text_seed_var"):
-                self.state.text_render.seed = int(self.text_seed_var.get())
+                self.state.text_render.font_size = max(1, int(self.font_size_var.get()))
+            if hasattr(self, "char_spacing_var"):
+                self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
+            if hasattr(self, "text_line_spacing_var"):
+                self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
+            if hasattr(self, "text_min_area_var"):
+                self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
+            if hasattr(self, "font_path_var"):
+                self.state.text_render.font_path = self.font_path_var.get()
             self.state.save(self.artifacts / "project.json")
         finally:
             self.root.destroy()

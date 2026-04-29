@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 import json
@@ -36,6 +36,7 @@ class AnswerLayer:
 class MachineConfig:
     port: str = "COM3"
     baud: int = 115200
+    dry_run: bool = True
     origin_x_mm: float = 0.0
     origin_y_mm: float = 0.0
     invert_x: bool = False
@@ -60,13 +61,12 @@ class StrokeConfig:
 
 @dataclass
 class TextRenderConfig:
-    width: int = 900
-    height: int = 320
     font_size: int = 42
-    perturb_x_sigma: float = 1.2
-    perturb_y_sigma: float = 1.2
-    perturb_theta_sigma: float = 0.035
-    seed: int = 42
+    char_spacing: int = 2
+    line_spacing: int = 18
+    line_width: int = 860
+    min_area: int = 1
+    font_path: str = ""
 
 
 @dataclass
@@ -87,19 +87,15 @@ class ProjectState:
     def load(cls, path: str | Path) -> "ProjectState":
         data: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
         state = cls()
-        def pick(model: type, values: dict[str, Any]) -> dict[str, Any]:
-            names = {item.name for item in fields(model)}
-            return {key: value for key, value in values.items() if key in names}
-
         if data.get("reference"):
-            state.reference = ReferenceCanvas(**pick(ReferenceCanvas, data["reference"]))
-        state.layers = [AnswerLayer(**pick(AnswerLayer, item)) for item in data.get("layers", [])]
+            state.reference = ReferenceCanvas(**data["reference"])
+        state.layers = [AnswerLayer(**item) for item in data.get("layers", [])]
         if data.get("machine"):
-            state.machine = MachineConfig(**pick(MachineConfig, data["machine"]))
+            state.machine = MachineConfig(**data["machine"])
         if data.get("stroke"):
-            state.stroke = StrokeConfig(**pick(StrokeConfig, data["stroke"]))
+            state.stroke = StrokeConfig(**data["stroke"])
         if data.get("text_render"):
-            state.text_render = TextRenderConfig(**pick(TextRenderConfig, data["text_render"]))
+            state.text_render = TextRenderConfig(**data["text_render"])
         state.rotate_trajectory_180 = bool(data.get("rotate_trajectory_180", False))
         state.eraser_radius = int(data.get("eraser_radius", state.eraser_radius))
         return state
