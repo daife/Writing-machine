@@ -31,8 +31,8 @@ from .image_ops import (
     transform_points_flip_v,
     transform_points_rotate_cw,
 )
-from .models import AnswerLayer, MachineConfig, ProjectState, ReferenceCanvas
-from .serial_exec import GCodeRunner, available_ports
+from .models import AnswerLayer, MachineConfig, ProjectState, ReferenceCanvas, SerialProxyConfig
+from .serial_exec import GCodeRunner, SerialProxyRunner, available_ports
 from .strokes import Stroke, generate_strokes, load_strokes, save_strokes
 
 
@@ -141,7 +141,9 @@ class WritingMachineApp:
         self.strokes: list[Stroke] = []
         self.gcode_lines: list[str] = []
         self.runner: GCodeRunner | None = None
+        self.proxy_runner: SerialProxyRunner | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
+        self.proxy_log_queue: queue.Queue[str] = queue.Queue()
         self._erase_points: list[tuple[float, float]] = []
         self.undo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
         self.redo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
@@ -166,6 +168,7 @@ class WritingMachineApp:
         self._build_strokes_tab()
         self._build_text_tab()
         self._build_executor_tab()
+        self._build_serial_proxy_tab()
 
     def _build_reference_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
@@ -400,6 +403,11 @@ class WritingMachineApp:
             self.invert_x_var.set(self.state.machine.invert_x)
             self.invert_y_var.set(self.state.machine.invert_y)
             self.dry_run_var.set(self.state.machine.dry_run)
+        if hasattr(self, "proxy_virtual_port_var"):
+            self.proxy_virtual_port_var.set(self.state.serial_proxy.virtual_port)
+            self.proxy_real_port_var.set(self.state.serial_proxy.real_port)
+            self.proxy_baud_var.set(self.state.serial_proxy.baud)
+            self.proxy_log_path_var.set(self.state.serial_proxy.log_path)
         if hasattr(self, "text_line_width_var"):
             self.text_line_width_var.set(self.state.text_render.line_width)
             self.font_size_var.set(self.state.text_render.font_size)
@@ -655,6 +663,56 @@ class WritingMachineApp:
 
         self.log_text = tk.Text(right, height=30, wrap="word")
         self.log_text.pack(fill="both", expand=True)
+
+    def _build_serial_proxy_tab(self) -> None:
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="6 串口抓包")
+        left = ttk.Frame(tab)
+        left.pack(side="left", fill="y", padx=8, pady=8)
+        right = ttk.Frame(tab)
+        right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
+
+        self.proxy_virtual_port_var = tk.StringVar(value=self.state.serial_proxy.virtual_port)
+        self.proxy_real_port_var = tk.StringVar(value=self.state.serial_proxy.real_port)
+        self.proxy_baud_var = tk.IntVar(value=self.state.serial_proxy.baud)
+        self.proxy_log_path_var = tk.StringVar(value=self.state.serial_proxy.log_path)
+        for var in (
+            self.proxy_virtual_port_var,
+            self.proxy_real_port_var,
+            self.proxy_baud_var,
+            self.proxy_log_path_var,
+        ):
+            var.trace_add("write", lambda *_args: self.save_serial_proxy_config_from_ui())
+
+        ttk.Button(left, text="刷新串口", command=self.refresh_proxy_ports).pack(fill="x", pady=3)
+        ttk.Label(left, text="虚拟端口（官方软件连接）").pack(anchor="w", pady=(8, 0))
+        self.proxy_virtual_combo = ttk.Combobox(left, textvariable=self.proxy_virtual_port_var, values=available_ports(), width=18)
+        self.proxy_virtual_combo.pack(fill="x")
+        self.add_tooltip(self.proxy_virtual_combo, "官方写字机软件连接的虚拟串口端。例如虚拟串口对 COM1 <-> COM2 中，官方软件连 COM1，则这里填 COM2。")
+
+        ttk.Label(left, text="真实设备端口").pack(anchor="w", pady=(8, 0))
+        self.proxy_real_combo = ttk.Combobox(left, textvariable=self.proxy_real_port_var, values=available_ports(), width=18)
+        self.proxy_real_combo.pack(fill="x")
+        self.add_tooltip(self.proxy_real_combo, "真实写字机所在串口。代理会把虚拟端收到的数据转发到这里，并反向转发设备响应。")
+
+        ttk.Label(left, text="波特率").pack(anchor="w", pady=(8, 0))
+        proxy_baud_entry = ttk.Entry(left, textvariable=self.proxy_baud_var)
+        proxy_baud_entry.pack(fill="x")
+        self.add_tooltip(proxy_baud_entry, "串口代理两端使用同一个波特率，通常要与官方软件和设备设置一致。")
+
+        ttk.Label(left, text="日志文件").pack(anchor="w", pady=(8, 0))
+        proxy_log_entry = ttk.Entry(left, textvariable=self.proxy_log_path_var)
+        proxy_log_entry.pack(fill="x")
+        self.add_tooltip(proxy_log_entry, "抓包日志追加写入的位置。每行包含方向、字节数、十六进制和 ASCII 预览。")
+        ttk.Button(left, text="选择日志文件", command=self.choose_proxy_log_path).pack(fill="x", pady=3)
+
+        ttk.Button(left, text="开始抓包代理", command=self.start_serial_proxy).pack(fill="x", pady=(16, 3))
+        ttk.Button(left, text="停止抓包代理", command=self.stop_serial_proxy).pack(fill="x", pady=3)
+        self.proxy_status_var = tk.StringVar(value="串口代理未启动")
+        ttk.Label(left, textvariable=self.proxy_status_var, wraplength=240).pack(anchor="w", pady=12)
+
+        self.proxy_log_text = tk.Text(right, height=30, wrap="word")
+        self.proxy_log_text.pack(fill="both", expand=True)
 
     def require_reference(self) -> ReferenceCanvas | None:
         if self.state.reference is None:
@@ -1659,6 +1717,67 @@ class WritingMachineApp:
         except (tk.TclError, ValueError):
             return
 
+    def serial_proxy_config_from_ui(self) -> SerialProxyConfig:
+        config = self.state.serial_proxy
+        config.virtual_port = self.proxy_virtual_port_var.get()
+        config.real_port = self.proxy_real_port_var.get()
+        config.baud = int(self.proxy_baud_var.get())
+        config.log_path = self.proxy_log_path_var.get().strip() or "logs/serial_log.txt"
+        self.state.serial_proxy = config
+        self.state.save(self.artifacts / "project.json")
+        return config
+
+    def save_serial_proxy_config_from_ui(self) -> None:
+        if not hasattr(self, "proxy_virtual_port_var"):
+            return
+        try:
+            self.serial_proxy_config_from_ui()
+        except (tk.TclError, ValueError):
+            return
+
+    def refresh_proxy_ports(self) -> None:
+        ports = available_ports()
+        self.proxy_virtual_combo["values"] = ports
+        self.proxy_real_combo["values"] = ports
+
+    def choose_proxy_log_path(self) -> None:
+        path = filedialog.asksaveasfilename(
+            initialfile=Path(self.proxy_log_path_var.get() or "logs/serial_log.txt").name,
+            defaultextension=".txt",
+            filetypes=[("Text log", "*.txt"), ("All files", "*.*")],
+        )
+        if path:
+            self.proxy_log_path_var.set(path)
+
+    def proxy_log(self, message: str) -> None:
+        self.proxy_log_text.insert("end", message + "\n")
+        self.proxy_log_text.see("end")
+
+    def start_serial_proxy(self) -> None:
+        if self.proxy_runner and self.proxy_runner.is_running():
+            messagebox.showinfo("串口代理", "串口代理已经在运行。")
+            return
+        try:
+            config = self.serial_proxy_config_from_ui()
+            self.proxy_runner = SerialProxyRunner(
+                config,
+                on_log=lambda msg: self.proxy_log_queue.put(msg),
+                on_done=lambda ok, msg: self.proxy_log_queue.put(("完成：" if ok else "失败：") + msg),
+            )
+            self.proxy_runner.start()
+            self.proxy_status_var.set("串口代理运行中")
+        except Exception as exc:
+            messagebox.showerror("启动失败", str(exc))
+
+    def stop_serial_proxy(self) -> None:
+        if self.proxy_runner:
+            self.proxy_runner.stop()
+        self.proxy_status_var.set("正在停止串口代理...")
+
+    def on_serial_proxy_done(self, ok: bool, message: str) -> None:
+        self.proxy_log(message)
+        self.proxy_status_var.set("串口代理已停止" if ok else "串口代理失败")
+
     def refresh_ports(self) -> None:
         self.port_combo["values"] = available_ports()
 
@@ -1720,12 +1839,24 @@ class WritingMachineApp:
                 self.log(self.log_queue.get_nowait())
         except queue.Empty:
             pass
+        try:
+            while True:
+                message = self.proxy_log_queue.get_nowait()
+                self.proxy_log(message)
+                if message.startswith("完成：") or message.startswith("失败："):
+                    self.proxy_status_var.set("串口代理已停止" if message.startswith("完成：") else "串口代理失败")
+        except queue.Empty:
+            pass
         self.root.after(100, self._poll_log_queue)
 
     def on_close(self) -> None:
         try:
+            if self.proxy_runner:
+                self.proxy_runner.stop()
             if hasattr(self, "port_var"):
                 self._machine_config_from_ui()
+            if hasattr(self, "proxy_virtual_port_var"):
+                self.serial_proxy_config_from_ui()
             if hasattr(self, "rotate_trajectory_180_var"):
                 self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
             if hasattr(self, "epsilon_var"):

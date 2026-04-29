@@ -52,6 +52,12 @@ python -m venv .venv
    - 没有连接机器时建议保持 `dry-run 理论验证` 开启。
    - 串口号、波特率、dry-run、X/Y 反向等执行器配置会自动保存并在下次启动时读取。
 
+6. 在 `6 串口抓包` 中启动双向串口代理，用于抓取官方软件和真实设备之间的通信。
+   - 配置“虚拟端口（官方软件连接）”“真实设备端口”“波特率”和日志文件。
+   - 点击 `开始抓包代理` 后，GUI 会在两个端口之间双向转发数据，并把十六进制和 ASCII 预览写入日志。
+   - 点击 `停止抓包代理` 可结束转发。
+   - 串口代理配置会自动保存并在下次启动时读取。
+
 运行产生的文件默认保存在 `artifacts/`。程序启动时会自动读取 `artifacts/project.json`，恢复上次的底图、图层、轨迹参数、文本生成参数和执行器配置。
 
 ## 打包 Windows EXE
@@ -108,7 +114,7 @@ git restore WritingMachine.spec
 
 ## 串口抓包
 
-本项目还提供 `serial_proxy.py`，可用于抓取官方写字机软件和真实设备之间的串口通信。通常需要 Windows 虚拟串口对工具，例如 com0com、VSPE 或其它虚拟串口驱动。
+串口抓包功能已集成到 GUI 的 `6 串口抓包` 模块中。通常需要 Windows 虚拟串口对工具，例如 com0com、VSPE 或其它虚拟串口驱动。
 
 示例连接方式：
 
@@ -117,19 +123,7 @@ git restore WritingMachine.spec
 - 本代理程序监听 `COM2`
 - 真实写字机连接 `COM13`
 
-列出串口：
-
-```powershell
-.\.venv\Scripts\python.exe serial_proxy.py --list-ports
-```
-
-开始抓包：
-
-```powershell
-.\.venv\Scripts\python.exe serial_proxy.py --virtual-port COM2 --real-port COM13 --baud 115200 --log serial_log.txt
-```
-
-抓到的数据会输出到控制台，并追加写入 `serial_log.txt`，包含十六进制和 ASCII 预览。
+在 GUI 中打开 `6 串口抓包`，选择虚拟端口、真实设备端口、波特率和日志文件，然后点击 `开始抓包代理`。抓到的数据会显示在界面右侧，并追加写入日志文件，包含十六进制和 ASCII 预览。
 
 ## 常见问题
 

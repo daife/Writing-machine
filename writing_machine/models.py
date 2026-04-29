@@ -50,6 +50,14 @@ class MachineConfig:
 
 
 @dataclass
+class SerialProxyConfig:
+    virtual_port: str = "COM2"
+    real_port: str = "COM13"
+    baud: int = 115200
+    log_path: str = "logs/serial_log.txt"
+
+
+@dataclass
 class StrokeConfig:
     simplify_epsilon: float = 2.0
     alpha_threshold: int = 20
@@ -74,6 +82,7 @@ class ProjectState:
     reference: ReferenceCanvas | None = None
     layers: list[AnswerLayer] = field(default_factory=list)
     machine: MachineConfig = field(default_factory=MachineConfig)
+    serial_proxy: SerialProxyConfig = field(default_factory=SerialProxyConfig)
     stroke: StrokeConfig = field(default_factory=StrokeConfig)
     text_render: TextRenderConfig = field(default_factory=TextRenderConfig)
     rotate_trajectory_180: bool = False
@@ -92,6 +101,8 @@ class ProjectState:
         state.layers = [AnswerLayer(**item) for item in data.get("layers", [])]
         if data.get("machine"):
             state.machine = MachineConfig(**data["machine"])
+        if data.get("serial_proxy"):
+            state.serial_proxy = SerialProxyConfig(**data["serial_proxy"])
         if data.get("stroke"):
             state.stroke = StrokeConfig(**data["stroke"])
         if data.get("text_render"):
