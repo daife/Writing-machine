@@ -5,7 +5,7 @@ import random
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .image_ops import render_black_on_transparent
+from .image_ops import binarize_black_on_transparent
 
 
 def default_font_path() -> str:
@@ -61,7 +61,7 @@ def render_text(
                 perturb_theta_sigma=perturb_theta_sigma,
             )
             image = next(iter(handwrite(text, template, seed=seed))).convert("RGBA")
-            render_black_on_transparent(image).save(target)
+            binarize_black_on_transparent(image).save(target)
             return str(target)
         except Exception as exc:
             raise RuntimeError(f"Handright 生成失败：{exc}") from exc
