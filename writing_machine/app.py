@@ -9,7 +9,7 @@ import tkinter as tk
 import time
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageGrab, ImageTk
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -101,6 +101,8 @@ class WritingMachineApp:
         self._build_ui()
         self.root.bind_all("<Control-z>", self.undo)
         self.root.bind_all("<Control-y>", self.redo)
+        self.root.bind_all("<Control-v>", self.on_global_paste)
+        self.root.bind_all("<Control-V>", self.on_global_paste)
         self.refresh_layer_list()
         self.refresh_layers_preview()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -138,11 +140,23 @@ class WritingMachineApp:
         ttk.Button(left, text="确认透视变换", command=self.confirm_reference).pack(fill="x", pady=16)
         ttk.Button(left, text="保存当前底图配置", command=self.save_reference_config).pack(fill="x", pady=3)
         ttk.Button(left, text="加载底图配置", command=self.load_reference_config).pack(fill="x", pady=3)
-        ttk.Label(left, text="角点顺序：左上、右上、右下、左下。\n点击画布依次选择，拖错可清空重选。", wraplength=220).pack(anchor="w")
+        ttk.Label(
+            left,
+            text=(
+                "画布操作：\n"
+                "Ctrl+V：粘贴剪切板图片作为底图\n"
+                "拖入图片文件：导入为底图\n"
+                "点击画布：依次选择左上、右上、右下、左下角点\n"
+                "角点选满后再次点击：清空并重新选择"
+            ),
+            wraplength=220,
+        ).pack(anchor="w")
 
         self.ref_canvas = PreviewCanvas(right, width=880, height=680)
         self.ref_canvas.pack(fill="both", expand=True)
         self.ref_canvas.bind("<Button-1>", self.on_reference_click)
+        self.ref_canvas.bind("<Control-v>", self.paste_reference_from_clipboard)
+        self.ref_canvas.bind("<Control-V>", self.paste_reference_from_clipboard)
         self.ref_canvas.bind("<Configure>", lambda _event: self.draw_reference_overlay())
         self.register_file_drop(self.ref_canvas, self.on_reference_drop)
 
@@ -181,6 +195,9 @@ class WritingMachineApp:
             left,
             text=(
                 "画布操作：\n"
+                "Ctrl+V或win+V：粘贴剪切板图片为答案图层\n"
+                "拖入图片文件：导入为答案图层\n"
+                "Ctrl+Z/Ctrl+Y：撤销/重做\n"
                 "左键未选中图层：选择图层\n"
                 "右键按住图框内部：平移\n"
                 "左键按住图框内部：橡皮擦\n"
@@ -227,6 +244,8 @@ class WritingMachineApp:
         self.layers_canvas.bind("<B3-Motion>", self.on_layer_mouse_drag)
         self.layers_canvas.bind("<ButtonRelease-3>", self.on_layer_mouse_up)
         self.layers_canvas.bind("<Motion>", self.on_layer_mouse_move)
+        self.layers_canvas.bind("<Control-v>", self.paste_layers_from_clipboard)
+        self.layers_canvas.bind("<Control-V>", self.paste_layers_from_clipboard)
         self.register_file_drop(self.layers_canvas, self.on_layers_drop)
         self._layer_mouse_start: dict[str, object] | None = None
 
@@ -465,6 +484,59 @@ class WritingMachineApp:
         except Exception:
             files = [event.data]
         return [str(Path(item)) for item in files if str(item).strip()]
+
+    def clipboard_image_paths(self, prefix: str) -> list[str]:
+        data = ImageGrab.grabclipboard()
+        if isinstance(data, Image.Image):
+            filename = f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}.png"
+            path = self.artifacts / filename
+            data.convert("RGBA").save(path)
+            return [str(path)]
+        if isinstance(data, (list, tuple)):
+            image_paths = []
+            for item in data:
+                path = Path(str(item))
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"} and path.exists():
+                    image_paths.append(str(path))
+            return image_paths
+        return []
+
+    def paste_reference_from_clipboard(self, _event=None) -> str:
+        try:
+            paths = self.clipboard_image_paths("clipboard_reference")
+            if not paths:
+                messagebox.showwarning("剪切板无图片", "请先复制一张图片，或复制一个图片文件。")
+                return "break"
+            self.load_reference_photo(paths[0])
+        except Exception as exc:
+            messagebox.showerror("粘贴失败", str(exc))
+        return "break"
+
+    def paste_layers_from_clipboard(self, _event=None) -> str:
+        try:
+            paths = self.clipboard_image_paths("clipboard_layer")
+            if not paths:
+                messagebox.showwarning("剪切板无图片", "请先复制一张图片，或复制一个图片文件。")
+                return "break"
+            for path in paths:
+                self.add_answer_layer(path)
+        except Exception as exc:
+            messagebox.showerror("粘贴失败", str(exc))
+        return "break"
+
+    def on_global_paste(self, event) -> str | None:
+        focus = self.root.focus_get()
+        if isinstance(focus, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox, ttk.Combobox)):
+            return None
+        try:
+            current_tab = self.notebook.index(self.notebook.select())
+        except Exception:
+            return None
+        if current_tab == 0:
+            return self.paste_reference_from_clipboard(event)
+        if current_tab == 1:
+            return self.paste_layers_from_clipboard(event)
+        return None
 
     def on_reference_drop(self, event) -> None:
         files = self.dropped_files(event)
