@@ -51,16 +51,16 @@ The project can be packaged as a Windows desktop app with PyInstaller. Use the e
 Build the GUI app:
 
 ```powershell
-.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --onedir --windowed --name WritingMachine --collect-all tkinterdnd2 --collect-submodules skimage --hidden-import serial.tools.list_ports main.py
+.\.venv\Scripts\pyinstaller.exe --noconfirm --clean WritingMachine.spec
 ```
 
 The generated app is:
 
 ```text
-dist\WritingMachine\WritingMachine.exe
+dist\WritingMachine.exe
 ```
 
-Because this uses `--onedir`, distribute the whole `dist\WritingMachine\` folder, not only the `.exe`; the `_internal\` directory contains Python, Tcl/Tk, tkinterdnd2, OpenCV, NumPy, SciPy, and scikit-image runtime files. Build outputs such as `build/`, `dist/`, and `*.spec` are ignored by Git.
+This spec uses PyInstaller one-file mode, so `dist\WritingMachine.exe` can be distributed by itself. On first launch, Windows may take a little longer because PyInstaller extracts bundled Python, Tcl/Tk, tkinterdnd2, OpenCV, NumPy, SciPy, and scikit-image runtime files into a temporary directory.
 
 ## Serial Capture
 
