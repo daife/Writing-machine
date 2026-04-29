@@ -79,7 +79,7 @@ def transform_points_flip_v(points: list[tuple[float, float]], height: int) -> l
 def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
     if min_area <= 1:
         return mask
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=4)
     cleaned = np.zeros_like(mask, dtype=np.uint8)
     for label in range(1, count):
         if stats[label, cv2.CC_STAT_AREA] >= min_area:
