@@ -27,7 +27,7 @@ class AnswerLayer:
     crop_top: int = 0
     crop_right: int = 0
     crop_bottom: int = 0
-    min_area: int = 5
+    min_area: int = 3
     already_extracted: bool = False
     enabled: bool = True
 
@@ -66,9 +66,9 @@ class StrokeConfig:
     mask_dilation_iterations: int = 0
     mask_erosion_iterations: int = 0
     spur_prune_length: int = 8
-    min_component_area: int = 12
-    min_stroke_length_px: float = 6.0
-    svg_sample_step_px: float = 2.0
+    min_component_area: int = 2
+    min_stroke_length_px: float = 1.0
+    svg_sample_step_px: float = 2.5
 
 
 @dataclass
