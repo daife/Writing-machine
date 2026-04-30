@@ -3,5 +3,7 @@ numpy==2.4.4
 opencv-python==4.13.0.92
 pillow==10.4.0
 pyserial==3.5
-scikit-image==0.26.0
+svgpathtools==1.7.2
 tkinterdnd2==0.4.3
+vpype==1.15.0
+vpype-gcode==0.13.0

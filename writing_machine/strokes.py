@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import json
 import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 
 import cv2
 import numpy as np
 from PIL import Image
-from skimage.morphology import skeletonize
+from svgpathtools import svg2paths2
 
 
 Point = tuple[float, float]
+Command = str | Sequence[str]
+DEFAULT_AUTOTRACE_PATH = Path(r"C:\Program Files\AutoTrace\autotrace.exe")
 
 
 @dataclass
@@ -20,17 +28,8 @@ class Stroke:
     closed: bool = False
 
 
-def _neighbors(point: tuple[int, int], pixels: set[tuple[int, int]]) -> list[tuple[int, int]]:
-    x, y = point
-    found = []
-    for dy in (-1, 0, 1):
-        for dx in (-1, 0, 1):
-            if dx == 0 and dy == 0:
-                continue
-            candidate = (x + dx, y + dy)
-            if candidate in pixels:
-                found.append(candidate)
-    return found
+class TraceToolError(RuntimeError):
+    pass
 
 
 def _path_length(points: list[Point]) -> float:
@@ -53,48 +52,6 @@ def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
         if stats[label, cv2.CC_STAT_AREA] >= min_area:
             keep |= labels == label
     return keep
-
-
-def _edge_key(a: tuple[int, int], b: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
-    return tuple(sorted((a, b)))  # type: ignore[return-value]
-
-
-def _trace_from_node(
-    start: tuple[int, int],
-    nxt: tuple[int, int],
-    pixels: set[tuple[int, int]],
-    nodes: set[tuple[int, int]],
-    visited_edges: set[tuple[tuple[int, int], tuple[int, int]]],
-) -> list[tuple[int, int]]:
-    path = [start, nxt]
-    visited_edges.add(_edge_key(start, nxt))
-    prev, cur = start, nxt
-    while cur not in nodes:
-        candidates = [item for item in _neighbors(cur, pixels) if item != prev]
-        candidates = [item for item in candidates if _edge_key(cur, item) not in visited_edges]
-        if not candidates:
-            break
-        chosen = candidates[0]
-        visited_edges.add(_edge_key(cur, chosen))
-        path.append(chosen)
-        prev, cur = cur, chosen
-    return path
-
-
-def _trace_loop(seed: tuple[int, int], pixels: set[tuple[int, int]], visited: set[tuple[int, int]]) -> list[tuple[int, int]]:
-    path = [seed]
-    visited.add(seed)
-    prev = None
-    cur = seed
-    while True:
-        candidates = [item for item in _neighbors(cur, pixels) if item != prev and item not in visited]
-        if not candidates:
-            break
-        nxt = candidates[0]
-        path.append(nxt)
-        visited.add(nxt)
-        prev, cur = cur, nxt
-    return path
 
 
 def rdp(points: list[Point], epsilon: float) -> list[Point]:
@@ -128,56 +85,177 @@ def image_to_mask(image: Image.Image, threshold: int = 20) -> np.ndarray:
     alpha = np.array(rgba.getchannel("A"))
     if alpha.max() > threshold:
         return (alpha > threshold).astype(bool)
+    if alpha.max() == 0:
+        return np.zeros(alpha.shape, dtype=bool)
     gray = np.array(rgba.convert("L"))
     return (gray < 240).astype(bool)
 
 
-def prune_short_terminal_branches(skeleton: np.ndarray, max_branch_length: int, max_passes: int = 20) -> np.ndarray:
-    if max_branch_length <= 0:
-        return skeleton.astype(bool)
-    pixels = set(zip(*np.where(skeleton.astype(bool))[::-1]))
-    if not pixels:
-        return skeleton.astype(bool)
+def _resolve_executable(command: str) -> str:
+    command = command.strip().strip('"')
+    if command == "autotrace" and DEFAULT_AUTOTRACE_PATH.exists():
+        return str(DEFAULT_AUTOTRACE_PATH)
+    found = shutil.which(command)
+    if found:
+        return found
+    candidate = Path(command)
+    if candidate.exists():
+        return str(candidate)
+    scripts_dir = Path(sys.executable).resolve().parent
+    for name in (command, f"{command}.exe", f"{command}.cmd", f"{command}.bat"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return str(candidate)
+    raise TraceToolError(
+        f"未找到轨迹工具 `{command}`。请先安装并确保命令可执行；模块 3 需要 AutoTrace 和 vpype。"
+    )
 
-    for _pass in range(max_passes):
-        degree = {pixel: len(_neighbors(pixel, pixels)) for pixel in pixels}
-        endpoints = sorted((pixel for pixel, deg in degree.items() if deg == 1), key=lambda item: (item[1], item[0]))
-        to_remove: set[tuple[int, int]] = set()
 
-        for endpoint in endpoints:
-            if endpoint not in pixels or endpoint in to_remove:
-                continue
-            path = [endpoint]
-            prev: tuple[int, int] | None = None
-            cur = endpoint
-            terminal_degree = degree[cur]
+def _command_prefix(command: Command) -> list[str]:
+    if isinstance(command, str):
+        return [_resolve_executable(command)]
+    if not command:
+        raise TraceToolError("轨迹工具命令不能为空。")
+    return [str(part) for part in command]
 
-            while True:
-                if cur != endpoint:
-                    terminal_degree = degree[cur]
-                    if terminal_degree != 2:
-                        break
-                candidates = [item for item in _neighbors(cur, pixels) if item != prev]
-                if not candidates:
-                    break
-                nxt = candidates[0]
-                path.append(nxt)
-                prev, cur = cur, nxt
-                if len(path) > max_branch_length + 1:
-                    break
 
-            branch_length = len(path) - 1
-            if branch_length <= max_branch_length and terminal_degree >= 3:
-                to_remove.update(path[:-1])
+def _display_command(args: Sequence[str]) -> str:
+    return "& " + subprocess.list2cmdline([str(arg) for arg in args])
 
-        if not to_remove:
-            break
-        pixels.difference_update(to_remove)
 
-    pruned = np.zeros_like(skeleton, dtype=bool)
-    for x, y in pixels:
-        pruned[y, x] = True
-    return pruned
+def _run_trace_command(args: list[str], cwd: Path) -> None:
+    env = None
+    executable_dir = Path(args[0]).parent
+    if executable_dir.exists():
+        env = dict(os.environ)
+        env["PATH"] = str(executable_dir) + os.pathsep + env.get("PATH", "")
+    try:
+        completed = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=True, check=False)
+    except OSError as exc:
+        raise TraceToolError(f"执行 `{_display_command(args)}` 失败：{exc}") from exc
+    if completed.returncode != 0:
+        details = (completed.stderr or completed.stdout or "").strip()
+        if len(details) > 1600:
+            details = details[-1600:]
+        message = f"轨迹工具执行失败，退出码 {completed.returncode}：{_display_command(args)}"
+        if details:
+            message += f"\n{details}"
+        raise TraceToolError(message)
+
+
+def _save_autotrace_input(
+    image: Image.Image,
+    path: Path,
+    alpha_threshold: int,
+    mask_dilation_iterations: int,
+    mask_erosion_iterations: int,
+    min_component_area: int,
+) -> bool:
+    mask = image_to_mask(image, threshold=alpha_threshold)
+    if not mask.any():
+        return False
+    if mask_dilation_iterations > 0:
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        mask = cv2.dilate(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_dilation_iterations)) > 0
+    if mask_erosion_iterations > 0:
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        mask = cv2.erode(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_erosion_iterations)) > 0
+        if not mask.any():
+            return False
+    mask = _remove_small_components(mask, min_component_area)
+    if not mask.any():
+        return False
+
+    bitmap = Image.fromarray(np.where(mask, 0, 255).astype(np.uint8), mode="L")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    bitmap.save(path)
+    return True
+
+
+def _sample_svg_path(path, sample_step_px: float) -> list[Point]:
+    step = max(0.25, float(sample_step_px))
+    points: list[Point] = []
+    for segment in path:
+        if not points:
+            start = segment.start
+            points.append((float(start.real), float(start.imag)))
+        try:
+            length = float(segment.length(error=1e-3))
+        except Exception:
+            length = abs(segment.end - segment.start)
+        samples = max(1, int(math.ceil(length / step)))
+        for index in range(1, samples + 1):
+            point = segment.point(index / samples)
+            candidate = (float(point.real), float(point.imag))
+            if not points or math.hypot(candidate[0] - points[-1][0], candidate[1] - points[-1][1]) > 1e-6:
+                points.append(candidate)
+    return points
+
+
+def _svg_to_strokes(
+    svg_path: Path,
+    sample_step_px: float,
+    min_points: int,
+    min_stroke_length_px: float,
+) -> list[Stroke]:
+    paths, _attributes, _svg_attributes = svg2paths2(str(svg_path))
+    strokes: list[Stroke] = []
+    for path in paths:
+        for subpath in path.continuous_subpaths():
+            points = _sample_svg_path(subpath, sample_step_px)
+            if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
+                strokes.append(Stroke(points=points, closed=bool(subpath.isclosed())))
+    return strokes
+
+
+def trace_image_to_svg(
+    image: Image.Image,
+    work_dir: str | Path,
+    alpha_threshold: int = 20,
+    mask_dilation_iterations: int = 0,
+    mask_erosion_iterations: int = 0,
+    min_component_area: int = 12,
+    simplify_epsilon: float = 2.0,
+    autotrace_command: Command = "autotrace",
+    vpype_command: Command = "vpype",
+) -> Path | None:
+    work = Path(work_dir)
+    input_png = work / "trace_input.png"
+    raw_svg = work / "trace_raw.svg"
+    optimized_svg = work / "trace_optimized.svg"
+    has_pixels = _save_autotrace_input(
+        image,
+        input_png,
+        alpha_threshold=alpha_threshold,
+        mask_dilation_iterations=mask_dilation_iterations,
+        mask_erosion_iterations=mask_erosion_iterations,
+        min_component_area=min_component_area,
+    )
+    if not has_pixels:
+        return None
+
+    _run_trace_command(
+        _command_prefix(autotrace_command)
+        + [str(input_png), "-centerline", "-output-file", str(raw_svg)],
+        work,
+    )
+    if not raw_svg.exists():
+        raise TraceToolError(f"AutoTrace 未生成 SVG：{raw_svg}")
+
+    tolerance = max(0.0, float(simplify_epsilon))
+    vpype_args = _command_prefix(vpype_command) + [
+        "read",
+        str(raw_svg),
+        "linemerge",
+        "linesimplify",
+    ]
+    if tolerance > 0:
+        vpype_args += ["--tolerance", f"{tolerance}px"]
+    vpype_args += ["linesort", "write", str(optimized_svg)]
+    _run_trace_command(vpype_args, work)
+    if not optimized_svg.exists():
+        raise TraceToolError(f"vpype 未生成优化 SVG：{optimized_svg}")
+    return optimized_svg
 
 
 def generate_strokes(
@@ -187,60 +265,50 @@ def generate_strokes(
     alpha_threshold: int = 20,
     mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
-    spur_prune_length: int = 8,
     min_component_area: int = 12,
     min_stroke_length_px: float = 6.0,
+    svg_sample_step_px: float = 2.0,
+    work_dir: str | Path | None = None,
+    autotrace_command: Command = "autotrace",
+    vpype_command: Command = "vpype",
+    **_legacy_kwargs,
 ) -> list[Stroke]:
-    mask = image_to_mask(image, threshold=alpha_threshold)
-    if not mask.any():
+    if work_dir is None:
+        with tempfile.TemporaryDirectory(prefix="writing_machine_trace_") as tmp:
+            return generate_strokes(
+                image,
+                simplify_epsilon=simplify_epsilon,
+                min_points=min_points,
+                alpha_threshold=alpha_threshold,
+                mask_dilation_iterations=mask_dilation_iterations,
+                mask_erosion_iterations=mask_erosion_iterations,
+                min_component_area=min_component_area,
+                min_stroke_length_px=min_stroke_length_px,
+                svg_sample_step_px=svg_sample_step_px,
+                work_dir=tmp,
+                autotrace_command=autotrace_command,
+                vpype_command=vpype_command,
+            )
+
+    optimized_svg = trace_image_to_svg(
+        image,
+        work_dir=work_dir,
+        alpha_threshold=alpha_threshold,
+        mask_dilation_iterations=mask_dilation_iterations,
+        mask_erosion_iterations=mask_erosion_iterations,
+        min_component_area=min_component_area,
+        simplify_epsilon=simplify_epsilon,
+        autotrace_command=autotrace_command,
+        vpype_command=vpype_command,
+    )
+    if optimized_svg is None:
         return []
-    if mask_dilation_iterations > 0:
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        mask = cv2.dilate(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_dilation_iterations)) > 0
-    if mask_erosion_iterations > 0:
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        mask = cv2.erode(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_erosion_iterations)) > 0
-        if not mask.any():
-            return []
-    mask = _remove_small_components(mask, min_component_area)
-    if not mask.any():
-        return []
-
-    skeleton = prune_short_terminal_branches(skeletonize(mask), spur_prune_length)
-    count, labels = cv2.connectedComponents(skeleton.astype(np.uint8), 8)
-    strokes: list[Stroke] = []
-
-    for label in range(1, count):
-        ys, xs = np.where(labels == label)
-        pixels = set(zip(xs.tolist(), ys.tolist()))
-        if len(pixels) < min_points:
-            continue
-        degree = {pixel: len(_neighbors(pixel, pixels)) for pixel in pixels}
-        nodes = {pixel for pixel, deg in degree.items() if deg != 2}
-        visited_edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
-
-        if nodes:
-            for node in sorted(nodes, key=lambda item: (item[1], item[0])):
-                for nxt in _neighbors(node, pixels):
-                    if _edge_key(node, nxt) in visited_edges:
-                        continue
-                    raw = _trace_from_node(node, nxt, pixels, nodes, visited_edges)
-                    points = [(float(x), float(y)) for x, y in raw]
-                    points = rdp(points, simplify_epsilon)
-                    if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
-                        strokes.append(Stroke(points=points, closed=False))
-        else:
-            visited: set[tuple[int, int]] = set()
-            for pixel in pixels:
-                if pixel in visited:
-                    continue
-                raw = _trace_loop(pixel, pixels, visited)
-                points = [(float(x), float(y)) for x, y in raw]
-                points = rdp(points, simplify_epsilon)
-                if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
-                    strokes.append(Stroke(points=points, closed=True))
-
-    return sorted(strokes, key=lambda stroke: (stroke.points[0][1], stroke.points[0][0]))
+    return _svg_to_strokes(
+        optimized_svg,
+        sample_step_px=svg_sample_step_px,
+        min_points=min_points,
+        min_stroke_length_px=min_stroke_length_px,
+    )
 
 
 def save_strokes(strokes: list[Stroke], width_px: int, height_px: int, path: str | Path) -> str:

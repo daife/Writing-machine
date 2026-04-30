@@ -342,7 +342,7 @@ class WritingMachineApp:
             "stroke_min_points_var",
             "mask_dilation_iterations_var",
             "mask_erosion_iterations_var",
-            "spur_prune_length_var",
+            "svg_sample_step_var",
             "min_component_area_var",
             "min_stroke_length_var",
         )
@@ -354,7 +354,7 @@ class WritingMachineApp:
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
-            self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
             self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
             self.state.save(self.artifacts / "project.json")
@@ -398,7 +398,7 @@ class WritingMachineApp:
             self.stroke_min_points_var.set(self.state.stroke.min_points)
             self.mask_dilation_iterations_var.set(self.state.stroke.mask_dilation_iterations)
             self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
-            self.spur_prune_length_var.set(self.state.stroke.spur_prune_length)
+            self.svg_sample_step_var.set(self.state.stroke.svg_sample_step_px)
             self.min_component_area_var.set(self.state.stroke.min_component_area)
             self.min_stroke_length_var.set(self.state.stroke.min_stroke_length_px)
         if hasattr(self, "eraser_radius_var"):
@@ -466,7 +466,7 @@ class WritingMachineApp:
         self.stroke_alpha_threshold_var = tk.IntVar(value=self.state.stroke.alpha_threshold)
         self.mask_dilation_iterations_var = tk.IntVar(value=self.state.stroke.mask_dilation_iterations)
         self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
-        self.spur_prune_length_var = tk.IntVar(value=self.state.stroke.spur_prune_length)
+        self.svg_sample_step_var = tk.DoubleVar(value=self.state.stroke.svg_sample_step_px)
         self.min_component_area_var = tk.IntVar(value=self.state.stroke.min_component_area)
         self.min_stroke_length_var = tk.DoubleVar(value=self.state.stroke.min_stroke_length_px)
         self.epsilon_var = tk.DoubleVar(value=self.state.stroke.simplify_epsilon)
@@ -501,15 +501,15 @@ class WritingMachineApp:
             1,
             200,
             1,
-            "在骨架化之前生效。连通域面积小于该值的透明字迹碎点会被删除；孤立点多时调大，标点丢失时调小。",
+            "在送入 AutoTrace 之前生效。连通域面积小于该值的透明字迹碎点会被删除；孤立点多时调大，标点丢失时调小。",
         )
         add_stroke_spin(
-            "毛刺剪枝长度(px)",
-            self.spur_prune_length_var,
-            0,
-            80,
-            1,
-            "在骨架化之后生效。会删除短的端点分支，用来去掉小毛刺；设为0表示不剪枝，过大可能删掉真实短笔画。",
+            "SVG 采样步长(px)",
+            self.svg_sample_step_var,
+            0.5,
+            20.0,
+            0.5,
+            "在读取 vpype 优化后的 SVG 时生效。数值越小，曲线采样越密、点更多；数值越大，轨迹更轻但弯曲处更粗略。",
         )
         add_stroke_spin(
             "路径简化 epsilon(px)",
@@ -517,7 +517,7 @@ class WritingMachineApp:
             0.1,
             20.0,
             0.1,
-            "在骨架路径追踪之后生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
+            "在 vpype linesimplify 阶段生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
         )
         add_stroke_spin(
             "最短笔画长度(px)",
@@ -525,7 +525,7 @@ class WritingMachineApp:
             0.0,
             80.0,
             0.5,
-            "在路径追踪之后生效。长度短于该值的 stroke 会被丢弃，用于过滤骨架碎线和孤立短点；需要保留标点时调小。",
+            "在读取优化 SVG 之后生效。长度短于该值的 stroke 会被丢弃，用于过滤碎线和孤立短点；需要保留标点时调小。",
         )
         add_stroke_spin(
             "每笔最少点数",
@@ -539,7 +539,7 @@ class WritingMachineApp:
             self.stroke_alpha_threshold_var,
             self.mask_dilation_iterations_var,
             self.mask_erosion_iterations_var,
-            self.spur_prune_length_var,
+            self.svg_sample_step_var,
             self.min_component_area_var,
             self.min_stroke_length_var,
             self.epsilon_var,
@@ -1562,7 +1562,7 @@ class WritingMachineApp:
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
-            self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
             self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
             self.strokes = generate_strokes(
@@ -1572,9 +1572,10 @@ class WritingMachineApp:
                 min_points=self.state.stroke.min_points,
                 mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
                 mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
-                spur_prune_length=self.state.stroke.spur_prune_length,
                 min_component_area=self.state.stroke.min_component_area,
                 min_stroke_length_px=self.state.stroke.min_stroke_length_px,
+                svg_sample_step_px=self.state.stroke.svg_sample_step_px,
+                work_dir=self.artifacts,
             )
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")
@@ -1899,8 +1900,8 @@ class WritingMachineApp:
                 self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             if hasattr(self, "mask_erosion_iterations_var"):
                 self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
-            if hasattr(self, "spur_prune_length_var"):
-                self.state.stroke.spur_prune_length = int(self.spur_prune_length_var.get())
+            if hasattr(self, "svg_sample_step_var"):
+                self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             if hasattr(self, "min_component_area_var"):
                 self.state.stroke.min_component_area = int(self.min_component_area_var.get())
             if hasattr(self, "min_stroke_length_var"):

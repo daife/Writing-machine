@@ -68,6 +68,7 @@ class StrokeConfig:
     spur_prune_length: int = 8
     min_component_area: int = 12
     min_stroke_length_px: float = 6.0
+    svg_sample_step_px: float = 2.0
 
 
 @dataclass
