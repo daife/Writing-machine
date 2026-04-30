@@ -11,13 +11,21 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-模块 3 还需要系统里能执行图像矢量化工具 `autotrace`。程序会优先查找 `"C:\Program Files\AutoTrace\autotrace.exe"`；如果安装到其他位置，请把 AutoTrace 加入 `PATH`。`vpype` 和 `vpype-gcode` 会随 `requirements.txt` 安装到虚拟环境中。注意：PyPI 上的 `autotrace` 包不是这个图像矢量化工具，不要用 `pip install autotrace` 来安装它。
+模块 3 还需要图像矢量化工具 `autotrace`。项目会优先使用随仓库和打包 exe 分发的 `third_party/autotrace-runtime/bin/autotrace.exe`，再回退到源码构建目录 `third_party/autotrace-build-mingw/.libs/autotrace.exe` 和 `"C:\Program Files\AutoTrace\autotrace.exe"`。`vpype` 和 `vpype-gcode` 会随 `requirements.txt` 安装；打包 exe 时会把 vpype 作为 Python 包内置调用。注意：PyPI 上的 `autotrace` 包不是这个图像矢量化工具，不要用 `pip install autotrace` 来安装它。
 
 启动程序：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py
 ```
+
+打包 exe：
+
+```powershell
+.\.venv\Scripts\pyinstaller.exe WritingMachine.spec --noconfirm
+```
+
+`WritingMachine.spec` 会把 `third_party/autotrace-runtime/bin` 里的 AutoTrace 运行时文件和 vpype Python 包一起打进 exe。
 
 推荐流程：
 
@@ -40,11 +48,11 @@ python -m venv .venv
    - 模块 4 生成后加入模块 2 的字迹图会作为已处理透明图层使用，不会重复执行模块 2 的去噪处理。
 
 3. 在 `3 轨迹生成` 中把透明字迹图转换为轨迹，并保存 `artifacts/strokes.json`。
-   - 处理顺序是：Alpha 阈值 -> 膨胀 -> 腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.png` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge linesimplify linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
-   - AutoTrace 调用格式参考官方 README。PowerShell 手动运行时，带空格的 exe 路径前要加 `&`：`& "C:\Program Files\AutoTrace\autotrace.exe" trace_input.png -centerline -output-file trace_raw.svg`。
+   - 处理顺序是：Alpha 阈值 -> 膨胀 -> 腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.bmp` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge linesimplify linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
+   - AutoTrace 调用格式参考官方 README。PowerShell 手动运行时，带空格的 exe 路径前要加 `&`：`& "C:\Program Files\AutoTrace\autotrace.exe" trace_input.bmp -centerline -output-file trace_raw.svg`。
    - 孤立点多时，优先把 `最小噪点面积(px)` 调到 `12~30`，把 `最短笔画长度(px)` 调到 `6~15`；如果标点、小短横被误删，再分别调低。曲线点太密时调大 `SVG 采样步长(px)`，细节丢失时调小。
    - 这些参数会保存到 `artifacts/project.json`，下次启动自动读取。
-   - 中间文件会保留在 `artifacts/trace_input.png`、`artifacts/trace_raw.svg` 和 `artifacts/trace_optimized.svg`，便于检查 AutoTrace/vpype 输出。
+   - 中间文件会保留在 `artifacts/trace_input.bmp`、`artifacts/trace_raw.svg` 和 `artifacts/trace_optimized.svg`，便于检查 AutoTrace/vpype 输出。
    - 如果实际纸张旋转 180 度或机器使用对角原点，可启用 `执行时使用对角原点/XY反向`；预览和 G-code 坐标会同步调整。普通模式按官方坐标输出为 `X=x_mm, Y=-y_mm`，对角模式按纸张宽高做 180 度映射，例如 A4 为 `X=210-x_mm, Y=-297+y_mm`。
 
 4. 可选：在 `4 文本转字迹` 中把文本生成透明字迹图片，再加入模块 2。

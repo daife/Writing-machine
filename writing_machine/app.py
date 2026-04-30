@@ -760,6 +760,7 @@ class WritingMachineApp:
 
         deleted = 0
         skipped = 0
+        deleted_names: set[str] = set()
         for path in self.artifacts.iterdir():
             try:
                 if path.name == "references":
@@ -768,7 +769,8 @@ class WritingMachineApp:
                 if path.resolve() in protected:
                     skipped += 1
                     continue
-                if path.is_file() and path.suffix.lower() in {".png", ".json", ".gcode"}:
+                if path.is_file() and path.suffix.lower() in {".png", ".bmp", ".svg", ".json", ".gcode"}:
+                    deleted_names.add(path.name)
                     path.unlink()
                     deleted += 1
                 else:
@@ -776,6 +778,13 @@ class WritingMachineApp:
             except Exception as exc:
                 self.log(f"缓存文件删除失败：{path}，{exc}")
         if not (self.artifacts / "handwriting_merged.png").exists():
+            self.gcode_lines = []
+        if "strokes.json" in deleted_names:
+            self.strokes = []
+            if hasattr(self, "stroke_info_var"):
+                self.stroke_info_var.set("尚未生成轨迹")
+            self.draw_strokes_preview()
+        if "job.gcode" in deleted_names:
             self.gcode_lines = []
         messagebox.showinfo("清理完成", f"已删除 {deleted} 个缓存文件，保留 {skipped} 项。")
 

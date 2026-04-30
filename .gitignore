@@ -24,6 +24,11 @@ serial_log.txt
 execution_log.txt
 *.log
 
+# Local third-party source/build caches
+third_party/*
+!third_party/autotrace-runtime/
+!third_party/autotrace-runtime/**
+
 # Generated machine/job files
 *.gcode
 

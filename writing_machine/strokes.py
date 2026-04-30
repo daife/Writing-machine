@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 import json
 import math
@@ -19,7 +21,16 @@ from svgpathtools import svg2paths2
 
 Point = tuple[float, float]
 Command = str | Sequence[str]
-DEFAULT_AUTOTRACE_PATH = Path(r"C:\Program Files\AutoTrace\autotrace.exe")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+AUTOTRACE_RUNTIME_DIR = RESOURCE_ROOT / "third_party" / "autotrace-runtime" / "bin"
+LOCAL_AUTOTRACE_PATH = AUTOTRACE_RUNTIME_DIR / "autotrace.exe"
+DEFAULT_AUTOTRACE_PATHS = (
+    LOCAL_AUTOTRACE_PATH,
+    PROJECT_ROOT / "third_party" / "autotrace-build-mingw" / ".libs" / "autotrace.exe",
+    Path(r"C:\Program Files\AutoTrace\autotrace.exe"),
+)
+VPYPE_INPROCESS = "__vpype_inprocess__"
 
 
 @dataclass
@@ -93,8 +104,10 @@ def image_to_mask(image: Image.Image, threshold: int = 20) -> np.ndarray:
 
 def _resolve_executable(command: str) -> str:
     command = command.strip().strip('"')
-    if command == "autotrace" and DEFAULT_AUTOTRACE_PATH.exists():
-        return str(DEFAULT_AUTOTRACE_PATH)
+    if command == "autotrace":
+        for autotrace_path in DEFAULT_AUTOTRACE_PATHS:
+            if autotrace_path.exists():
+                return str(autotrace_path)
     found = shutil.which(command)
     if found:
         return found
@@ -113,6 +126,8 @@ def _resolve_executable(command: str) -> str:
 
 def _command_prefix(command: Command) -> list[str]:
     if isinstance(command, str):
+        if command.strip().strip('"') == "vpype" and getattr(sys, "frozen", False):
+            return [VPYPE_INPROCESS]
         return [_resolve_executable(command)]
     if not command:
         raise TraceToolError("轨迹工具命令不能为空。")
@@ -120,15 +135,59 @@ def _command_prefix(command: Command) -> list[str]:
 
 
 def _display_command(args: Sequence[str]) -> str:
+    if args and args[0] == VPYPE_INPROCESS:
+        return "vpype " + subprocess.list2cmdline([str(arg) for arg in args[1:]])
     return "& " + subprocess.list2cmdline([str(arg) for arg in args])
 
 
+def _run_vpype_inprocess(args: list[str], cwd: Path) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    old_cwd = Path.cwd()
+    try:
+        import vpype_cli
+
+        os.chdir(cwd)
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            vpype_cli.cli.main(args=args[1:], standalone_mode=False)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+        if code != 0:
+            details = (stderr.getvalue() or stdout.getvalue()).strip()
+            message = f"轨迹工具执行失败，退出码 {code}：{_display_command(args)}"
+            if details:
+                message += f"\n{details[-1600:]}"
+            raise TraceToolError(message) from exc
+    except Exception as exc:
+        details = (stderr.getvalue() or stdout.getvalue()).strip()
+        message = f"执行 `{_display_command(args)}` 失败：{exc}"
+        if details:
+            message += f"\n{details[-1600:]}"
+        raise TraceToolError(message) from exc
+    finally:
+        os.chdir(old_cwd)
+
+
 def _run_trace_command(args: list[str], cwd: Path) -> None:
+    if args and args[0] == VPYPE_INPROCESS:
+        _run_vpype_inprocess(args, cwd)
+        return
     env = None
     executable_dir = Path(args[0]).parent
     if executable_dir.exists():
         env = dict(os.environ)
-        env["PATH"] = str(executable_dir) + os.pathsep + env.get("PATH", "")
+        path_entries = [executable_dir]
+        if AUTOTRACE_RUNTIME_DIR.exists():
+            path_entries.append(AUTOTRACE_RUNTIME_DIR)
+        local_build_env = PROJECT_ROOT / "third_party" / "autotrace-build-env" / "Library"
+        for dependency_dir in (
+            local_build_env / "bin",
+            local_build_env / "mingw-w64" / "bin",
+            local_build_env / "usr" / "bin",
+        ):
+            if dependency_dir.exists():
+                path_entries.append(dependency_dir)
+        env["PATH"] = os.pathsep.join(str(path) for path in path_entries) + os.pathsep + env.get("PATH", "")
     try:
         completed = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=True, check=False)
     except OSError as exc:
@@ -168,7 +227,7 @@ def _save_autotrace_input(
 
     bitmap = Image.fromarray(np.where(mask, 0, 255).astype(np.uint8), mode="L")
     path.parent.mkdir(parents=True, exist_ok=True)
-    bitmap.save(path)
+    bitmap.convert("RGB").save(path, format="BMP")
     return True
 
 
@@ -220,12 +279,12 @@ def trace_image_to_svg(
     vpype_command: Command = "vpype",
 ) -> Path | None:
     work = Path(work_dir)
-    input_png = work / "trace_input.png"
+    input_bitmap = work / "trace_input.bmp"
     raw_svg = work / "trace_raw.svg"
     optimized_svg = work / "trace_optimized.svg"
     has_pixels = _save_autotrace_input(
         image,
-        input_png,
+        input_bitmap,
         alpha_threshold=alpha_threshold,
         mask_dilation_iterations=mask_dilation_iterations,
         mask_erosion_iterations=mask_erosion_iterations,
@@ -236,7 +295,7 @@ def trace_image_to_svg(
 
     _run_trace_command(
         _command_prefix(autotrace_command)
-        + [str(input_png), "-centerline", "-output-file", str(raw_svg)],
+        + [str(input_bitmap), "-centerline", "-output-file", str(raw_svg)],
         work,
     )
     if not raw_svg.exists():

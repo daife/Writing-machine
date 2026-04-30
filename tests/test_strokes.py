@@ -8,7 +8,8 @@ import unittest
 
 from PIL import Image, ImageDraw
 
-from writing_machine.strokes import _command_prefix, _display_command, generate_strokes
+from writing_machine import strokes as strokes_module
+from writing_machine.strokes import VPYPE_INPROCESS, _command_prefix, _display_command, generate_strokes
 
 
 def _write_fake_tools(directory: Path) -> tuple[list[str], list[str]]:
@@ -66,11 +67,25 @@ class StrokeTracePipelineTests(unittest.TestCase):
             tmp_path = Path(tmp)
             tool = tmp_path / "fake tool.exe"
             tool.write_text("", encoding="utf-8")
-            args = _command_prefix(f'"{tool}"') + ["input.png", "-centerline", "-output-file", "raw.svg"]
+            args = _command_prefix(f'"{tool}"') + ["input.bmp", "-centerline", "-output-file", "raw.svg"]
 
         self.assertEqual(args[0], str(tool))
         self.assertTrue(_display_command(args).startswith("& "))
         self.assertIn(f'"{tool}"', _display_command(args))
+
+    def test_frozen_build_uses_embedded_vpype(self) -> None:
+        original = getattr(strokes_module.sys, "frozen", None)
+        strokes_module.sys.frozen = True
+        try:
+            args = _command_prefix("vpype") + ["read", "raw.svg", "write", "optimized.svg"]
+        finally:
+            if original is None:
+                delattr(strokes_module.sys, "frozen")
+            else:
+                strokes_module.sys.frozen = original
+
+        self.assertEqual(args[0], VPYPE_INPROCESS)
+        self.assertEqual(_display_command(args), "vpype read raw.svg write optimized.svg")
 
     def test_empty_transparent_image_returns_no_strokes_without_tools(self) -> None:
         strokes = generate_strokes(Image.new("RGBA", (20, 20), (0, 0, 0, 0)))
@@ -98,7 +113,7 @@ class StrokeTracePipelineTests(unittest.TestCase):
                 vpype_command=vpype,
             )
 
-            self.assertTrue((tmp_path / "trace_input.png").exists())
+            self.assertTrue((tmp_path / "trace_input.bmp").exists())
             self.assertTrue((tmp_path / "trace_raw.svg").exists())
             self.assertTrue((tmp_path / "trace_optimized.svg").exists())
 
