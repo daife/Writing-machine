@@ -3,6 +3,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 project_root = Path.cwd()
+site_packages = project_root / '.venv' / 'Lib' / 'site-packages'
 autotrace_runtime = project_root / 'third_party' / 'autotrace-runtime' / 'bin'
 
 datas = []
@@ -10,9 +11,12 @@ binaries = []
 hiddenimports = ['serial.tools.list_ports']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-for package_name in ('vpype', 'vpype_cli', 'vpype_gcode'):
+for package_name in ('vpype', 'vpype_cli', 'vpype_gcode', 'pnoise'):
     tmp_ret = collect_all(package_name)
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+if site_packages.exists():
+    for mypyc_runtime in site_packages.glob('*mypyc*.pyd'):
+        binaries.append((str(mypyc_runtime), '.'))
 if autotrace_runtime.exists():
     for runtime_file in autotrace_runtime.iterdir():
         if runtime_file.is_file():
