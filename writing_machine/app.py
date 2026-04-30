@@ -25,6 +25,7 @@ from .image_ops import (
     load_rgba,
     make_preview,
     perspective_transform,
+    prepare_answer_layer_image,
     render_layer,
     save_png,
     transform_points_flip_h,
@@ -260,6 +261,16 @@ class WritingMachineApp:
             wraplength=230,
         ).pack(anchor="w", pady=(8, 6))
 
+        self.layer_import_threshold_var = tk.IntVar(value=self.state.answer_import_threshold)
+        self.layer_import_threshold_var.trace_add("write", lambda *_args: self.save_layer_import_threshold_from_ui())
+        threshold_label = ttk.Label(left, text="二值化阈值")
+        threshold_label.pack(anchor="w", pady=(7, 0))
+        threshold_spin = ttk.Spinbox(left, from_=0, to=255, increment=1, textvariable=self.layer_import_threshold_var)
+        threshold_spin.pack(fill="x")
+        threshold_tip = "仅在导入答案图片图层时生效。灰度值低于该阈值的像素会被视为黑色字迹；提高它会过滤更浅的黑灰区域。"
+        self.add_tooltip(threshold_label, threshold_tip)
+        self.add_tooltip(threshold_spin, threshold_tip)
+
         self.layer_vars = {
             "min_area": tk.IntVar(value=5),
         }
@@ -316,6 +327,15 @@ class WritingMachineApp:
             return
         try:
             self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
+
+    def save_layer_import_threshold_from_ui(self) -> None:
+        if not hasattr(self, "layer_import_threshold_var"):
+            return
+        try:
+            self.state.answer_import_threshold = max(0, min(255, int(self.layer_import_threshold_var.get())))
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
@@ -405,6 +425,8 @@ class WritingMachineApp:
             self.min_stroke_length_var.set(self.state.stroke.min_stroke_length_px)
         if hasattr(self, "eraser_radius_var"):
             self.eraser_radius_var.set(self.state.eraser_radius)
+        if hasattr(self, "layer_import_threshold_var"):
+            self.layer_import_threshold_var.set(self.state.answer_import_threshold)
         if hasattr(self, "port_var"):
             self.port_var.set(self.state.machine.port)
             self.baud_var.set(self.state.machine.baud)
@@ -1043,10 +1065,22 @@ class WritingMachineApp:
         path = path or filedialog.askopenfilename(filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff")])
         if not path:
             return
-        layer = AnswerLayer(source_path=path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+        source_path = path
+        layer_min_area = int(self.layer_vars["min_area"].get()) if "min_area" in self.layer_vars else 5
         if preserve_transparency:
+            layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
             layer.already_extracted = True
             layer.min_area = 1
+        else:
+            image = load_rgba(path)
+            threshold = int(self.layer_import_threshold_var.get()) if hasattr(self, "layer_import_threshold_var") else 245
+            processed = prepare_answer_layer_image(image, threshold=threshold)
+            stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in Path(path).stem.strip()) or "layer"
+            filename = f"imported_layer_{time.strftime('%Y%m%d_%H%M%S')}_{stem}.png"
+            source_path = save_png(processed, self.artifacts / filename)
+            layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+            layer.already_extracted = False
+            layer.min_area = layer_min_area
         self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()

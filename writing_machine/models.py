@@ -91,6 +91,7 @@ class ProjectState:
     text_render: TextRenderConfig = field(default_factory=TextRenderConfig)
     rotate_trajectory_180: bool = False
     eraser_radius: int = 18
+    answer_import_threshold: int = 245
 
     def save(self, path: str | Path) -> None:
         target = Path(path)
@@ -126,4 +127,5 @@ class ProjectState:
             state.text_render = TextRenderConfig(**data["text_render"])
         state.rotate_trajectory_180 = bool(data.get("rotate_trajectory_180", False))
         state.eraser_radius = int(data.get("eraser_radius", state.eraser_radius))
+        state.answer_import_threshold = int(data.get("answer_import_threshold", state.answer_import_threshold))
         return state

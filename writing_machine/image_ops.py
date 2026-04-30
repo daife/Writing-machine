@@ -115,6 +115,14 @@ def binarize_black_on_transparent(image: Image.Image, threshold: int = 245) -> I
     return black
 
 
+def prepare_answer_layer_image(image: Image.Image, threshold: int = 245) -> Image.Image:
+    processed = binarize_black_on_transparent(image, threshold=threshold)
+    alpha_bbox = processed.getchannel("A").getbbox()
+    if alpha_bbox is None:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    return processed.crop(alpha_bbox)
+
+
 def render_layer(layer: AnswerLayer) -> Image.Image:
     image = load_rgba(layer.source_path)
     width, height = image.size
