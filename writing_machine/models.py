@@ -13,7 +13,7 @@ class ReferenceCanvas:
     height_mm: float
     width_px: int
     height_px: int
-    px_per_mm: float = 10.0
+    px_per_mm: float = 5.0
 
 
 @dataclass
@@ -73,11 +73,11 @@ class StrokeConfig:
 
 @dataclass
 class TextRenderConfig:
-    font_size: int = 42
+    font_size: int = 84
     char_spacing: int = 2
     line_spacing: int = 18
     line_width: int = 860
-    min_area: int = 1
+    min_area: int = 5
     font_path: str = ""
 
 
