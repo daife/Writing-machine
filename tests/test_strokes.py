@@ -9,7 +9,15 @@ import unittest
 from PIL import Image, ImageDraw
 
 from writing_machine import strokes as strokes_module
-from writing_machine.strokes import VPYPE_INPROCESS, _command_prefix, _display_command, generate_strokes
+from writing_machine.strokes import (
+    MASK_MORPHOLOGY_DILATE_THEN_ERODE,
+    MASK_MORPHOLOGY_ERODE_THEN_DILATE,
+    VPYPE_INPROCESS,
+    _apply_mask_morphology,
+    _command_prefix,
+    _display_command,
+    generate_strokes,
+)
 
 
 def _write_fake_tools(directory: Path) -> tuple[list[str], list[str]]:
@@ -91,6 +99,20 @@ class StrokeTracePipelineTests(unittest.TestCase):
         strokes = generate_strokes(Image.new("RGBA", (20, 20), (0, 0, 0, 0)))
 
         self.assertEqual(strokes, [])
+
+    def test_mask_morphology_order_controls_erosion_and_dilation_sequence(self) -> None:
+        image = Image.new("RGBA", (9, 9), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((1, 1, 5, 5), fill=(0, 0, 0, 255))
+        draw.point((7, 7), fill=(0, 0, 0, 255))
+        mask = strokes_module.image_to_mask(image)
+
+        closed = _apply_mask_morphology(mask, 1, 1, MASK_MORPHOLOGY_DILATE_THEN_ERODE)
+        opened = _apply_mask_morphology(mask, 1, 1, MASK_MORPHOLOGY_ERODE_THEN_DILATE)
+
+        self.assertTrue(closed[7, 7])
+        self.assertFalse(opened[7, 7])
+        self.assertGreater(int(closed.sum()), int(opened.sum()))
 
     def test_small_components_are_removed_before_centerline_trace(self) -> None:
         image = Image.new("RGBA", (60, 40), (0, 0, 0, 0))

@@ -33,6 +33,12 @@ DEFAULT_AUTOTRACE_PATHS = (
     Path(r"C:\Program Files\AutoTrace\autotrace.exe"),
 )
 VPYPE_INPROCESS = "__vpype_inprocess__"
+MASK_MORPHOLOGY_DILATE_THEN_ERODE = "dilate_then_erode"
+MASK_MORPHOLOGY_ERODE_THEN_DILATE = "erode_then_dilate"
+MASK_MORPHOLOGY_ORDERS = {
+    MASK_MORPHOLOGY_DILATE_THEN_ERODE,
+    MASK_MORPHOLOGY_ERODE_THEN_DILATE,
+}
 
 
 @dataclass
@@ -65,6 +71,41 @@ def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
         if stats[label, cv2.CC_STAT_AREA] >= min_area:
             keep |= labels == label
     return keep
+
+
+def _normalize_mask_morphology_order(order: str | None) -> str:
+    if order in MASK_MORPHOLOGY_ORDERS:
+        return str(order)
+    return MASK_MORPHOLOGY_DILATE_THEN_ERODE
+
+
+def _apply_mask_morphology(
+    mask: np.ndarray,
+    mask_dilation_iterations: int,
+    mask_erosion_iterations: int,
+    mask_morphology_order: str | None,
+) -> np.ndarray:
+    order = _normalize_mask_morphology_order(mask_morphology_order)
+    operations = (
+        ("dilate", mask_dilation_iterations),
+        ("erode", mask_erosion_iterations),
+    )
+    if order == MASK_MORPHOLOGY_ERODE_THEN_DILATE:
+        operations = tuple(reversed(operations))
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    for operation, iterations in operations:
+        iterations = int(iterations)
+        if iterations <= 0:
+            continue
+        source = mask.astype(np.uint8) * 255
+        if operation == "dilate":
+            mask = cv2.dilate(source, kernel, iterations=iterations) > 0
+        else:
+            mask = cv2.erode(source, kernel, iterations=iterations) > 0
+        if not mask.any():
+            return mask
+    return mask
 
 
 def rdp(points: list[Point], epsilon: float) -> list[Point]:
@@ -251,18 +292,19 @@ def _save_autotrace_input(
     mask_dilation_iterations: int,
     mask_erosion_iterations: int,
     min_component_area: int,
+    mask_morphology_order: str = MASK_MORPHOLOGY_DILATE_THEN_ERODE,
 ) -> bool:
     mask = image_to_mask(image, threshold=alpha_threshold)
     if not mask.any():
         return False
-    if mask_dilation_iterations > 0:
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        mask = cv2.dilate(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_dilation_iterations)) > 0
-    if mask_erosion_iterations > 0:
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        mask = cv2.erode(mask.astype(np.uint8) * 255, kernel, iterations=int(mask_erosion_iterations)) > 0
-        if not mask.any():
-            return False
+    mask = _apply_mask_morphology(
+        mask,
+        mask_dilation_iterations=mask_dilation_iterations,
+        mask_erosion_iterations=mask_erosion_iterations,
+        mask_morphology_order=mask_morphology_order,
+    )
+    if not mask.any():
+        return False
     mask = _remove_small_components(mask, min_component_area)
     if not mask.any():
         return False
@@ -315,6 +357,7 @@ def trace_image_to_svg(
     alpha_threshold: int = 20,
     mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
+    mask_morphology_order: str = MASK_MORPHOLOGY_DILATE_THEN_ERODE,
     min_component_area: int = 12,
     simplify_epsilon: float = 2.0,
     autotrace_command: Command = "autotrace",
@@ -333,6 +376,7 @@ def trace_image_to_svg(
         mask_dilation_iterations=mask_dilation_iterations,
         mask_erosion_iterations=mask_erosion_iterations,
         min_component_area=min_component_area,
+        mask_morphology_order=mask_morphology_order,
     )
     if not has_pixels:
         _notify_progress(progress_callback, "没有检测到可生成轨迹的字迹像素。")
@@ -379,6 +423,7 @@ def generate_strokes(
     alpha_threshold: int = 20,
     mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
+    mask_morphology_order: str = MASK_MORPHOLOGY_DILATE_THEN_ERODE,
     min_component_area: int = 12,
     min_stroke_length_px: float = 6.0,
     svg_sample_step_px: float = 2.0,
@@ -397,6 +442,7 @@ def generate_strokes(
                 alpha_threshold=alpha_threshold,
                 mask_dilation_iterations=mask_dilation_iterations,
                 mask_erosion_iterations=mask_erosion_iterations,
+                mask_morphology_order=mask_morphology_order,
                 min_component_area=min_component_area,
                 min_stroke_length_px=min_stroke_length_px,
                 svg_sample_step_px=svg_sample_step_px,
@@ -412,6 +458,7 @@ def generate_strokes(
         alpha_threshold=alpha_threshold,
         mask_dilation_iterations=mask_dilation_iterations,
         mask_erosion_iterations=mask_erosion_iterations,
+        mask_morphology_order=mask_morphology_order,
         min_component_area=min_component_area,
         simplify_epsilon=simplify_epsilon,
         autotrace_command=autotrace_command,

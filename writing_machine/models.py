@@ -65,6 +65,7 @@ class StrokeConfig:
     min_points: int = 2
     mask_dilation_iterations: int = 0
     mask_erosion_iterations: int = 0
+    mask_morphology_order: str = "dilate_then_erode"
     spur_prune_length: int = 8
     min_component_area: int = 2
     min_stroke_length_px: float = 1.0

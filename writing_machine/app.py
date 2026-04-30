@@ -34,7 +34,29 @@ from .image_ops import (
 )
 from .models import AnswerLayer, MachineConfig, ProjectState, ReferenceCanvas, SerialProxyConfig
 from .serial_exec import GCodeRunner, SerialProxyRunner, available_ports
-from .strokes import Stroke, generate_strokes, load_strokes, save_strokes
+from .strokes import (
+    MASK_MORPHOLOGY_DILATE_THEN_ERODE,
+    MASK_MORPHOLOGY_ERODE_THEN_DILATE,
+    Stroke,
+    generate_strokes,
+    load_strokes,
+    save_strokes,
+)
+
+
+MASK_MORPHOLOGY_ORDER_LABELS = {
+    MASK_MORPHOLOGY_DILATE_THEN_ERODE: "先膨胀后腐蚀",
+    MASK_MORPHOLOGY_ERODE_THEN_DILATE: "先腐蚀后膨胀",
+}
+MASK_MORPHOLOGY_ORDER_VALUES = {label: value for value, label in MASK_MORPHOLOGY_ORDER_LABELS.items()}
+
+
+def mask_morphology_order_label(value: str) -> str:
+    return MASK_MORPHOLOGY_ORDER_LABELS.get(value, MASK_MORPHOLOGY_ORDER_LABELS[MASK_MORPHOLOGY_DILATE_THEN_ERODE])
+
+
+def mask_morphology_order_value(label_or_value: str) -> str:
+    return MASK_MORPHOLOGY_ORDER_VALUES.get(label_or_value, label_or_value)
 
 
 class PreviewCanvas(tk.Canvas):
@@ -347,6 +369,7 @@ class WritingMachineApp:
             "stroke_min_points_var",
             "mask_dilation_iterations_var",
             "mask_erosion_iterations_var",
+            "mask_morphology_order_var",
             "svg_sample_step_var",
             "min_component_area_var",
             "min_stroke_length_var",
@@ -359,6 +382,9 @@ class WritingMachineApp:
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
+            self.state.stroke.mask_morphology_order = mask_morphology_order_value(
+                str(self.mask_morphology_order_var.get())
+            )
             self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
             self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
@@ -429,6 +455,7 @@ class WritingMachineApp:
             self.stroke_min_points_var.set(self.state.stroke.min_points)
             self.mask_dilation_iterations_var.set(self.state.stroke.mask_dilation_iterations)
             self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
+            self.mask_morphology_order_var.set(mask_morphology_order_label(self.state.stroke.mask_morphology_order))
             self.svg_sample_step_var.set(self.state.stroke.svg_sample_step_px)
             self.min_component_area_var.set(self.state.stroke.min_component_area)
             self.min_stroke_length_var.set(self.state.stroke.min_stroke_length_px)
@@ -499,6 +526,9 @@ class WritingMachineApp:
         self.stroke_alpha_threshold_var = tk.IntVar(value=self.state.stroke.alpha_threshold)
         self.mask_dilation_iterations_var = tk.IntVar(value=self.state.stroke.mask_dilation_iterations)
         self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
+        self.mask_morphology_order_var = tk.StringVar(
+            value=mask_morphology_order_label(self.state.stroke.mask_morphology_order)
+        )
         self.svg_sample_step_var = tk.DoubleVar(value=self.state.stroke.svg_sample_step_px)
         self.min_component_area_var = tk.IntVar(value=self.state.stroke.min_component_area)
         self.min_stroke_length_var = tk.DoubleVar(value=self.state.stroke.min_stroke_length_px)
@@ -518,7 +548,7 @@ class WritingMachineApp:
             0,
             5,
             1,
-            "在轨迹生成时、腐蚀之前生效。会先把字迹 mask 向外扩一圈，可连接断裂笔画或加粗细线；次数过大会粘连相邻笔画。",
+            "在轨迹生成时生效。会把字迹 mask 向外扩一圈，可连接断裂笔画或加粗细线；次数过大会粘连相邻笔画。",
         )
         add_stroke_spin(
             "轨迹腐蚀次数",
@@ -526,8 +556,20 @@ class WritingMachineApp:
             0,
             5,
             1,
-            "在轨迹生成时、膨胀之后生效。会把字迹 mask 向内收缩，可抵消膨胀或去掉细小毛边；次数过大会吃掉细笔画。",
+            "在轨迹生成时生效。会把字迹 mask 向内收缩，可抵消膨胀或去掉细小毛边；次数过大会吃掉细笔画。",
         )
+        order_label = ttk.Label(left, text="腐蚀/膨胀顺序")
+        order_label.pack(anchor="w", pady=(7, 0))
+        order_combo = ttk.Combobox(
+            left,
+            values=tuple(MASK_MORPHOLOGY_ORDER_VALUES.keys()),
+            textvariable=self.mask_morphology_order_var,
+            state="readonly",
+        )
+        order_combo.pack(fill="x")
+        order_tip = "在轨迹生成时生效。选择先膨胀后腐蚀可补小断口；选择先腐蚀后膨胀可先去毛边和孤立噪点。"
+        self.add_tooltip(order_label, order_tip)
+        self.add_tooltip(order_combo, order_tip)
         add_stroke_spin(
             "最小噪点面积(px)",
             self.min_component_area_var,
@@ -572,6 +614,7 @@ class WritingMachineApp:
             self.stroke_alpha_threshold_var,
             self.mask_dilation_iterations_var,
             self.mask_erosion_iterations_var,
+            self.mask_morphology_order_var,
             self.svg_sample_step_var,
             self.min_component_area_var,
             self.min_stroke_length_var,
@@ -1632,6 +1675,9 @@ class WritingMachineApp:
             self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
+            self.state.stroke.mask_morphology_order = mask_morphology_order_value(
+                str(self.mask_morphology_order_var.get())
+            )
             self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
             self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
@@ -1642,6 +1688,7 @@ class WritingMachineApp:
                 min_points=self.state.stroke.min_points,
                 mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
                 mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
+                mask_morphology_order=self.state.stroke.mask_morphology_order,
                 min_component_area=self.state.stroke.min_component_area,
                 min_stroke_length_px=self.state.stroke.min_stroke_length_px,
                 svg_sample_step_px=self.state.stroke.svg_sample_step_px,
@@ -1974,6 +2021,10 @@ class WritingMachineApp:
                 self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             if hasattr(self, "mask_erosion_iterations_var"):
                 self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
+            if hasattr(self, "mask_morphology_order_var"):
+                self.state.stroke.mask_morphology_order = mask_morphology_order_value(
+                    str(self.mask_morphology_order_var.get())
+                )
             if hasattr(self, "svg_sample_step_var"):
                 self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             if hasattr(self, "min_component_area_var"):

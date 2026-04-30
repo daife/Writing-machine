@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 from writing_machine.gcode import pixel_to_mm, strokes_to_gcode
-from writing_machine.models import MachineConfig, ProjectState, ReferenceCanvas
+from writing_machine.models import MachineConfig, ProjectState, ReferenceCanvas, StrokeConfig
 from writing_machine.strokes import Stroke
 
 
@@ -62,6 +62,29 @@ class MachineConfigMigrationTests(unittest.TestCase):
         self.assertEqual(loaded.machine.pen_down, "G1G90 Z4.0F10000")
         self.assertEqual(loaded.machine.pen_up, "G1G90 Z0.0F10000")
         self.assertEqual(loaded.machine.dwell_seconds, 0.0)
+
+    def test_stroke_morphology_order_is_saved_and_legacy_configs_default(self) -> None:
+        state = ProjectState()
+        state.stroke = StrokeConfig(
+            mask_dilation_iterations=1,
+            mask_erosion_iterations=2,
+            mask_morphology_order="erode_then_dilate",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "project.json"
+            state.save(path)
+            loaded = ProjectState.load(path)
+
+            legacy_path = Path(tmp) / "legacy_project.json"
+            legacy_path.write_text(
+                '{"stroke": {"mask_dilation_iterations": 1, "mask_erosion_iterations": 2}}',
+                encoding="utf-8",
+            )
+            legacy_loaded = ProjectState.load(legacy_path)
+
+        self.assertEqual(loaded.stroke.mask_morphology_order, "erode_then_dilate")
+        self.assertEqual(legacy_loaded.stroke.mask_morphology_order, "dilate_then_erode")
 
 
 if __name__ == "__main__":
