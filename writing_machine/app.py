@@ -231,23 +231,8 @@ class WritingMachineApp:
     def _build_layers_tab(self) -> None:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="2 字迹定位")
-        left_outer = ttk.Frame(tab)
-        left_outer.pack(side="left", fill="y", padx=8, pady=8)
-        left_canvas = tk.Canvas(left_outer, width=260, highlightthickness=0)
-        left_scrollbar = ttk.Scrollbar(left_outer, orient="vertical", command=left_canvas.yview)
-        left = ttk.Frame(left_canvas)
-        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
-        left_canvas.configure(yscrollcommand=left_scrollbar.set)
-        left_canvas.pack(side="left", fill="y", expand=False)
-        left_scrollbar.pack(side="right", fill="y")
-
-        def update_left_scroll(_event=None):
-            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
-            left_canvas.itemconfigure(left_window, width=left_canvas.winfo_width())
-
-        left.bind("<Configure>", update_left_scroll)
-        left_canvas.bind("<Configure>", update_left_scroll)
-        left_canvas.bind_all("<MouseWheel>", lambda event: left_canvas.yview_scroll(int(-event.delta / 120), "units"))
+        left = ttk.Frame(tab)
+        left.pack(side="left", fill="y", padx=8, pady=8)
         right = ttk.Frame(tab)
         right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
@@ -360,6 +345,23 @@ class WritingMachineApp:
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
+
+    def clear_stroke_progress(self) -> None:
+        if not hasattr(self, "stroke_progress_text"):
+            return
+        self.stroke_progress_text.configure(state="normal")
+        self.stroke_progress_text.delete("1.0", tk.END)
+        self.stroke_progress_text.configure(state="disabled")
+
+    def append_stroke_progress(self, message: str) -> None:
+        if not hasattr(self, "stroke_progress_text"):
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self.stroke_progress_text.configure(state="normal")
+        self.stroke_progress_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.stroke_progress_text.see(tk.END)
+        self.stroke_progress_text.configure(state="disabled")
+        self.root.update_idletasks()
 
     def make_undo_snapshot(self) -> tuple[ProjectState, list[Stroke], list[str], int | None]:
         return (
@@ -504,20 +506,20 @@ class WritingMachineApp:
             "在送入 AutoTrace 之前生效。连通域面积小于该值的透明字迹碎点会被删除；孤立点多时调大，标点丢失时调小。",
         )
         add_stroke_spin(
-            "SVG 采样步长(px)",
-            self.svg_sample_step_var,
-            0.5,
-            20.0,
-            0.5,
-            "在读取 vpype 优化后的 SVG 时生效。数值越小，曲线采样越密、点更多；数值越大，轨迹更轻但弯曲处更粗略。",
-        )
-        add_stroke_spin(
             "路径简化 epsilon(px)",
             self.epsilon_var,
             0.1,
             20.0,
             0.1,
             "在 vpype linesimplify 阶段生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
+        )
+        add_stroke_spin(
+            "SVG 采样步长(px)",
+            self.svg_sample_step_var,
+            0.5,
+            20.0,
+            0.5,
+            "在读取 vpype 优化后的 SVG 时生效。数值越小，曲线采样越密、点更多；数值越大，轨迹更轻但弯曲处更粗略。",
         )
         add_stroke_spin(
             "最短笔画长度(px)",
@@ -564,6 +566,16 @@ class WritingMachineApp:
         ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         self.stroke_info_var = tk.StringVar(value="尚未生成轨迹")
         ttk.Label(left, textvariable=self.stroke_info_var, wraplength=240).pack(anchor="w", pady=12)
+        progress_outer = ttk.Frame(left)
+        progress_outer.pack(side="bottom", fill="both", expand=True, pady=(8, 0))
+        ttk.Label(progress_outer, text="轨迹生成输出").pack(anchor="w")
+        progress_frame = ttk.Frame(progress_outer)
+        progress_frame.pack(fill="both", expand=True, pady=(4, 0))
+        self.stroke_progress_text = tk.Text(progress_frame, height=9, width=34, wrap="word", state="disabled")
+        progress_scroll = ttk.Scrollbar(progress_frame, orient="vertical", command=self.stroke_progress_text.yview)
+        self.stroke_progress_text.configure(yscrollcommand=progress_scroll.set)
+        self.stroke_progress_text.pack(side="left", fill="both", expand=True)
+        progress_scroll.pack(side="right", fill="y")
 
         self.stroke_canvas = PreviewCanvas(right, width=880, height=680)
         self.stroke_canvas.pack(fill="both", expand=True)
@@ -1557,12 +1569,17 @@ class WritingMachineApp:
         ref = self.require_reference()
         if ref is None:
             return
+        self.clear_stroke_progress()
+        self.append_stroke_progress("开始从透明字迹图生成轨迹。")
         path = self.artifacts / "handwriting_merged.png"
         if not path.exists():
+            self.append_stroke_progress("未找到 handwriting_merged.png，先导出透明字迹图。")
             self.export_merged_handwriting()
         if not path.exists():
+            self.append_stroke_progress("透明字迹图不存在，轨迹生成已停止。")
             return
         try:
+            self.append_stroke_progress(f"正在读取透明字迹图：{path}")
             image = load_rgba(path)
             self.push_undo_state()
             self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
@@ -1585,14 +1602,18 @@ class WritingMachineApp:
                 min_stroke_length_px=self.state.stroke.min_stroke_length_px,
                 svg_sample_step_px=self.state.stroke.svg_sample_step_px,
                 work_dir=self.artifacts,
+                progress_callback=self.append_stroke_progress,
             )
+            self.append_stroke_progress("正在保存 strokes.json...")
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")
             points = sum(len(stroke.points) for stroke in self.strokes)
             self.stroke_info_var.set(f"已生成 {len(self.strokes)} 条 stroke，共 {points} 个点。")
             self.draw_strokes_preview()
+            self.append_stroke_progress(f"轨迹生成完成：{len(self.strokes)} 条 stroke，共 {points} 个点。")
             messagebox.showinfo("完成", "轨迹已保存到 artifacts/strokes.json")
         except Exception as exc:
+            self.append_stroke_progress(f"轨迹生成失败：{exc}")
             messagebox.showerror("轨迹生成失败", str(exc))
 
     def preview_rotated_handwriting(self) -> None:
