@@ -366,6 +366,15 @@ class WritingMachineApp:
         except (tk.TclError, ValueError):
             return
 
+    def save_trajectory_mode_from_ui(self) -> None:
+        if not hasattr(self, "rotate_trajectory_180_var"):
+            return
+        try:
+            self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
+
     def clear_stroke_progress(self) -> None:
         if not hasattr(self, "stroke_progress_text"):
             return
@@ -571,6 +580,7 @@ class WritingMachineApp:
         ):
             var.trace_add("write", lambda *_args: self.save_stroke_config_from_ui())
         self.rotate_trajectory_180_var = tk.BooleanVar(value=self.state.rotate_trajectory_180)
+        self.rotate_trajectory_180_var.trace_add("write", lambda *_args: self.save_trajectory_mode_from_ui())
         rotate_check = ttk.Checkbutton(
             left,
             text="执行时使用对角原点/XY反向",
