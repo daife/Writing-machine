@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 import json
+
+
+def _dataclass_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    names = {item.name for item in fields(cls)}
+    return {key: value for key, value in data.items() if key in names}
 
 
 @dataclass
@@ -60,16 +65,40 @@ class SerialProxyConfig:
 
 @dataclass
 class StrokeConfig:
-    simplify_epsilon: float = 2.0
+    trace_debug_artifacts: bool = False
     alpha_threshold: int = 20
-    min_points: int = 2
     mask_dilation_iterations: int = 0
     mask_erosion_iterations: int = 0
     mask_morphology_order: str = "dilate_then_erode"
     spur_prune_length: int = 8
     min_component_area: int = 2
-    min_stroke_length_px: float = 1.0
-    svg_sample_step_px: float = 2.5
+    autotrace_centerline: bool = True
+    autotrace_background_color: str = ""
+    autotrace_color_count: int = 0
+    autotrace_corner_always_threshold: float = 60.0
+    autotrace_corner_surround: int = 4
+    autotrace_corner_threshold: float = 100.0
+    autotrace_despeckle_level: int = 0
+    autotrace_despeckle_tightness: float = 2.0
+    autotrace_dpi: int = 0
+    autotrace_error_threshold: float = 2.0
+    autotrace_filter_iterations: int = 4
+    autotrace_line_reversion_threshold: float = 0.01
+    autotrace_line_threshold: float = 1.0
+    autotrace_noise_removal: float = 0.99
+    autotrace_preserve_width: bool = False
+    autotrace_remove_adjacent_corners: bool = False
+    autotrace_tangent_surround: int = 3
+    autotrace_width_weight_factor: float = 6.0
+    autotrace_report_progress: bool = False
+    autotrace_debug_bitmap: bool = False
+    vpype_linemerge_tolerance_px: float = 1.0
+    forkclean_max_search_length_px: float = 24.0
+    forkclean_min_short_length_px: float = 3.0
+    forkclean_angle_threshold_deg: float = 110.0
+    forkclean_node_tolerance_px: float = 1.0
+    forkclean_passes: int = 1
+    vpype_linesimplify_tolerance_px: float = 0.3
 
 
 @dataclass
@@ -103,10 +132,10 @@ class ProjectState:
         data: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
         state = cls()
         if data.get("reference"):
-            state.reference = ReferenceCanvas(**data["reference"])
-        state.layers = [AnswerLayer(**item) for item in data.get("layers", [])]
+            state.reference = ReferenceCanvas(**_dataclass_kwargs(ReferenceCanvas, data["reference"]))
+        state.layers = [AnswerLayer(**_dataclass_kwargs(AnswerLayer, item)) for item in data.get("layers", [])]
         if data.get("machine"):
-            state.machine = MachineConfig(**data["machine"])
+            state.machine = MachineConfig(**_dataclass_kwargs(MachineConfig, data["machine"]))
             legacy_grbl_defaults = (
                 state.machine.travel_feed == 2500
                 and state.machine.write_feed == 1500
@@ -121,11 +150,11 @@ class ProjectState:
                 state.machine.pen_up = "G1G90 Z0.0F10000"
                 state.machine.dwell_seconds = 0.0
         if data.get("serial_proxy"):
-            state.serial_proxy = SerialProxyConfig(**data["serial_proxy"])
+            state.serial_proxy = SerialProxyConfig(**_dataclass_kwargs(SerialProxyConfig, data["serial_proxy"]))
         if data.get("stroke"):
-            state.stroke = StrokeConfig(**data["stroke"])
+            state.stroke = StrokeConfig(**_dataclass_kwargs(StrokeConfig, data["stroke"]))
         if data.get("text_render"):
-            state.text_render = TextRenderConfig(**data["text_render"])
+            state.text_render = TextRenderConfig(**_dataclass_kwargs(TextRenderConfig, data["text_render"]))
         state.rotate_trajectory_180 = bool(data.get("rotate_trajectory_180", False))
         state.eraser_radius = int(data.get("eraser_radius", state.eraser_radius))
         state.answer_import_threshold = int(data.get("answer_import_threshold", state.answer_import_threshold))

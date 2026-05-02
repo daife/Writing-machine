@@ -7,3 +7,4 @@ svgpathtools==1.7.2
 tkinterdnd2==0.4.3
 vpype==1.15.0
 vpype-gcode==0.13.0
+-e third_party/vpype_forkclean_plugin_v2

@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_all
 project_root = Path.cwd()
 site_packages = project_root / '.venv' / 'Lib' / 'site-packages'
 autotrace_runtime = project_root / 'third_party' / 'autotrace-runtime' / 'bin'
+forkclean_plugin = project_root / 'third_party' / 'vpype_forkclean_plugin_v2'
 
 datas = []
 binaries = []
@@ -25,11 +26,16 @@ if autotrace_runtime.exists():
     for runtime_doc in runtime_root.rglob('*'):
         if runtime_doc.is_file() and runtime_doc.parent != autotrace_runtime:
             datas.append((str(runtime_doc), str(runtime_doc.parent.relative_to(project_root))))
+if forkclean_plugin.exists():
+    hiddenimports.append('vpype_forkclean')
+    for plugin_file in forkclean_plugin.rglob('*'):
+        if plugin_file.is_file():
+            datas.append((str(plugin_file), str(plugin_file.parent.relative_to(project_root))))
 
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[str(forkclean_plugin)] if forkclean_plugin.exists() else [],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

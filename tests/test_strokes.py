@@ -30,7 +30,8 @@ def _write_fake_tools(directory: Path) -> tuple[list[str], list[str]]:
             import sys
             from PIL import Image
 
-            input_path = Path(sys.argv[1])
+            (Path.cwd() / "autotrace_args.txt").write_text("\\n".join(sys.argv[1:]), encoding="utf-8")
+            input_path = Path(sys.argv[sys.argv.index("-output-format") - 1])
             output_path = Path(sys.argv[sys.argv.index("-output-file") + 1])
             image = Image.open(input_path).convert("L")
             black = [(x, y) for y in range(image.height) for x in range(image.width) if image.getpixel((x, y)) < 128]
@@ -81,7 +82,7 @@ class StrokeTracePipelineTests(unittest.TestCase):
         self.assertTrue(_display_command(args).startswith("& "))
         self.assertIn(f'"{tool}"', _display_command(args))
 
-    def test_frozen_build_uses_embedded_vpype(self) -> None:
+    def test_default_vpype_uses_inprocess_runner_for_plugin_registration(self) -> None:
         original = getattr(strokes_module.sys, "frozen", None)
         strokes_module.sys.frozen = True
         try:
@@ -126,22 +127,37 @@ class StrokeTracePipelineTests(unittest.TestCase):
             autotrace, vpype = _write_fake_tools(tmp_path)
             strokes = generate_strokes(
                 image,
-                simplify_epsilon=0.5,
                 min_component_area=3,
-                min_stroke_length_px=4,
-                svg_sample_step_px=4,
+                trace_debug_artifacts=True,
+                autotrace_background_color="FFFFFF",
+                autotrace_color_count=2,
+                autotrace_error_threshold=1.5,
+                autotrace_filter_iterations=0,
                 work_dir=tmp_path,
                 autotrace_command=autotrace,
                 vpype_command=vpype,
             )
+            autotrace_args = (tmp_path / "autotrace_args.txt").read_text(encoding="utf-8")
 
             self.assertTrue((tmp_path / "trace_input.bmp").exists())
             self.assertTrue((tmp_path / "trace_raw.svg").exists())
+            self.assertTrue((tmp_path / "trace_linemerge.svg").exists())
+            self.assertTrue((tmp_path / "trace_forkclean.svg").exists())
+            self.assertTrue((tmp_path / "trace_linesimplify.svg").exists())
             self.assertTrue((tmp_path / "trace_optimized.svg").exists())
 
         self.assertEqual(len(strokes), 1)
+        self.assertEqual(len(strokes[0].points), 2)
         self.assertGreaterEqual(strokes[0].points[0][0], 8)
         self.assertGreaterEqual(strokes[0].points[-1][0], 50)
+        self.assertIn("-centerline", autotrace_args)
+        self.assertIn("-background-color", autotrace_args)
+        self.assertIn("FFFFFF", autotrace_args)
+        self.assertIn("-color-count", autotrace_args)
+        self.assertIn("2", autotrace_args)
+        self.assertIn("-error-threshold", autotrace_args)
+        self.assertIn("1.5", autotrace_args)
+        self.assertIn("-filter-iterations", autotrace_args)
 
     def test_vpype_pipeline_uses_merge_simplify_and_sort(self) -> None:
         image = Image.new("RGBA", (30, 20), (0, 0, 0, 0))
@@ -153,10 +169,14 @@ class StrokeTracePipelineTests(unittest.TestCase):
             autotrace, vpype = _write_fake_tools(tmp_path)
             strokes = generate_strokes(
                 image,
-                simplify_epsilon=1.25,
                 min_component_area=1,
-                min_stroke_length_px=8,
-                svg_sample_step_px=5,
+                vpype_linemerge_tolerance_px=1.5,
+                forkclean_max_search_length_px=25,
+                forkclean_min_short_length_px=4,
+                forkclean_angle_threshold_deg=100,
+                forkclean_node_tolerance_px=0.75,
+                forkclean_passes=2,
+                vpype_linesimplify_tolerance_px=0.4,
                 work_dir=tmp_path,
                 autotrace_command=autotrace,
                 vpype_command=vpype,
@@ -165,10 +185,22 @@ class StrokeTracePipelineTests(unittest.TestCase):
 
         self.assertEqual(len(strokes), 1)
         self.assertIn("linemerge", vpype_args)
+        self.assertIn("1.5px", vpype_args)
+        self.assertIn("forkclean", vpype_args)
+        self.assertIn("--max-search-length", vpype_args)
+        self.assertIn("25.0px", vpype_args)
+        self.assertIn("--min-short-length", vpype_args)
+        self.assertIn("4.0px", vpype_args)
+        self.assertIn("--angle-threshold", vpype_args)
+        self.assertIn("100.0deg", vpype_args)
+        self.assertIn("--node-tolerance", vpype_args)
+        self.assertIn("0.75px", vpype_args)
+        self.assertIn("--passes", vpype_args)
+        self.assertIn("2", vpype_args)
         self.assertIn("linesimplify", vpype_args)
-        self.assertIn("--tolerance", vpype_args)
-        self.assertIn("1.25px", vpype_args)
+        self.assertIn("0.4px", vpype_args)
         self.assertIn("linesort", vpype_args)
+        self.assertIn("--two-opt", vpype_args)
 
 
 if __name__ == "__main__":

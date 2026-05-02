@@ -5,9 +5,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+import importlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,12 +35,14 @@ DEFAULT_AUTOTRACE_PATHS = (
     Path(r"C:\Program Files\AutoTrace\autotrace.exe"),
 )
 VPYPE_INPROCESS = "__vpype_inprocess__"
+FORKCLEAN_PLUGIN_ROOT = RESOURCE_ROOT / "third_party" / "vpype_forkclean_plugin_v2"
 MASK_MORPHOLOGY_DILATE_THEN_ERODE = "dilate_then_erode"
 MASK_MORPHOLOGY_ERODE_THEN_DILATE = "erode_then_dilate"
 MASK_MORPHOLOGY_ORDERS = {
     MASK_MORPHOLOGY_DILATE_THEN_ERODE,
     MASK_MORPHOLOGY_ERODE_THEN_DILATE,
 }
+HEX_COLOR_RE = re.compile(r"^[0-9a-fA-F]{6}$")
 
 
 @dataclass
@@ -49,15 +53,6 @@ class Stroke:
 
 class TraceToolError(RuntimeError):
     pass
-
-
-def _path_length(points: list[Point]) -> float:
-    if len(points) < 2:
-        return 0.0
-    total = 0.0
-    for a, b in zip(points, points[1:]):
-        total += math.hypot(b[0] - a[0], b[1] - a[1])
-    return total
 
 
 def _remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
@@ -169,7 +164,7 @@ def _resolve_executable(command: str) -> str:
 
 def _command_prefix(command: Command) -> list[str]:
     if isinstance(command, str):
-        if command.strip().strip('"') == "vpype" and getattr(sys, "frozen", False):
+        if command.strip().strip('"') == "vpype":
             return [VPYPE_INPROCESS]
         return [_resolve_executable(command)]
     if not command:
@@ -188,6 +183,19 @@ def _notify_progress(progress_callback: ProgressCallback | None, message: str) -
         progress_callback(message)
 
 
+def _register_vpype_forkclean_plugin(vpype_cli_module) -> None:
+    if "forkclean" in vpype_cli_module.cli.commands:
+        return
+    plugin_root = str(FORKCLEAN_PLUGIN_ROOT)
+    if FORKCLEAN_PLUGIN_ROOT.exists() and plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+    try:
+        plugin = importlib.import_module("vpype_forkclean")
+    except Exception as exc:
+        raise TraceToolError(f"加载 vpype forkclean 插件失败：{exc}") from exc
+    vpype_cli_module.cli.add_command(plugin.forkclean)
+
+
 def _run_vpype_inprocess(
     args: list[str],
     cwd: Path,
@@ -202,6 +210,7 @@ def _run_vpype_inprocess(
     try:
         import vpype_cli
 
+        _register_vpype_forkclean_plugin(vpype_cli)
         if running_message:
             _notify_progress(progress_callback, f"{running_message}，已运行 0.0 秒...")
         os.chdir(cwd)
@@ -315,38 +324,110 @@ def _save_autotrace_input(
     return True
 
 
-def _sample_svg_path(path, sample_step_px: float) -> list[Point]:
-    step = max(0.25, float(sample_step_px))
+def _format_float(value: float) -> str:
+    return f"{float(value):g}"
+
+
+def _build_autotrace_args(
+    command: Command,
+    input_bitmap: Path,
+    output_svg: Path,
+    *,
+    autotrace_centerline: bool,
+    autotrace_background_color: str,
+    autotrace_color_count: int,
+    autotrace_corner_always_threshold: float,
+    autotrace_corner_surround: int,
+    autotrace_corner_threshold: float,
+    autotrace_despeckle_level: int,
+    autotrace_despeckle_tightness: float,
+    autotrace_dpi: int,
+    autotrace_error_threshold: float,
+    autotrace_filter_iterations: int,
+    autotrace_line_reversion_threshold: float,
+    autotrace_line_threshold: float,
+    autotrace_noise_removal: float,
+    autotrace_preserve_width: bool,
+    autotrace_remove_adjacent_corners: bool,
+    autotrace_tangent_surround: int,
+    autotrace_width_weight_factor: float,
+    autotrace_report_progress: bool,
+    autotrace_debug_bitmap: bool,
+) -> list[str]:
+    args = _command_prefix(command)
+    background = autotrace_background_color.strip().lstrip("#")
+    if background:
+        if not HEX_COLOR_RE.match(background):
+            raise TraceToolError("AutoTrace background-color 必须是 6 位十六进制颜色，例如 FFFFFF。")
+        args += ["-background-color", background]
+    if autotrace_centerline:
+        args.append("-centerline")
+    if autotrace_color_count > 0:
+        args += ["-color-count", str(max(1, min(256, int(autotrace_color_count))))]
+    args += [
+        "-corner-always-threshold",
+        _format_float(autotrace_corner_always_threshold),
+        "-corner-surround",
+        str(max(0, int(autotrace_corner_surround))),
+        "-corner-threshold",
+        _format_float(autotrace_corner_threshold),
+        "-despeckle-level",
+        str(max(0, min(20, int(autotrace_despeckle_level)))),
+        "-despeckle-tightness",
+        _format_float(max(0.0, min(8.0, float(autotrace_despeckle_tightness)))),
+    ]
+    if autotrace_dpi > 0:
+        args += ["-dpi", str(max(1, int(autotrace_dpi)))]
+    args += [
+        "-error-threshold",
+        _format_float(autotrace_error_threshold),
+        "-filter-iterations",
+        str(max(0, int(autotrace_filter_iterations))),
+        "-line-reversion-threshold",
+        _format_float(autotrace_line_reversion_threshold),
+        "-line-threshold",
+        _format_float(autotrace_line_threshold),
+        "-noise-removal",
+        _format_float(max(0.0, min(1.0, float(autotrace_noise_removal)))),
+    ]
+    if autotrace_preserve_width:
+        args.append("-preserve-width")
+    if autotrace_remove_adjacent_corners:
+        args.append("-remove-adjacent-corners")
+    args += [
+        "-tangent-surround",
+        str(max(0, int(autotrace_tangent_surround))),
+        "-width-weight-factor",
+        _format_float(autotrace_width_weight_factor),
+    ]
+    if autotrace_report_progress:
+        args.append("-report-progress")
+    if autotrace_debug_bitmap:
+        args.append("-debug-bitmap")
+    args += [str(input_bitmap), "-output-format", "svg", "-output-file", str(output_svg)]
+    return args
+
+
+def _svg_path_to_points(path) -> list[Point]:
     points: list[Point] = []
     for segment in path:
         if not points:
             start = segment.start
             points.append((float(start.real), float(start.imag)))
-        try:
-            length = float(segment.length(error=1e-3))
-        except Exception:
-            length = abs(segment.end - segment.start)
-        samples = max(1, int(math.ceil(length / step)))
-        for index in range(1, samples + 1):
-            point = segment.point(index / samples)
-            candidate = (float(point.real), float(point.imag))
-            if not points or math.hypot(candidate[0] - points[-1][0], candidate[1] - points[-1][1]) > 1e-6:
-                points.append(candidate)
+        end = segment.end
+        candidate = (float(end.real), float(end.imag))
+        if not points or math.hypot(candidate[0] - points[-1][0], candidate[1] - points[-1][1]) > 1e-6:
+            points.append(candidate)
     return points
 
 
-def _svg_to_strokes(
-    svg_path: Path,
-    sample_step_px: float,
-    min_points: int,
-    min_stroke_length_px: float,
-) -> list[Stroke]:
+def _svg_to_strokes(svg_path: Path) -> list[Stroke]:
     paths, _attributes, _svg_attributes = svg2paths2(str(svg_path))
     strokes: list[Stroke] = []
     for path in paths:
         for subpath in path.continuous_subpaths():
-            points = _sample_svg_path(subpath, sample_step_px)
-            if len(points) >= min_points and _path_length(points) >= min_stroke_length_px:
+            points = _svg_path_to_points(subpath)
+            if len(points) >= 2:
                 strokes.append(Stroke(points=points, closed=bool(subpath.isclosed())))
     return strokes
 
@@ -359,7 +440,34 @@ def trace_image_to_svg(
     mask_erosion_iterations: int = 0,
     mask_morphology_order: str = MASK_MORPHOLOGY_DILATE_THEN_ERODE,
     min_component_area: int = 12,
-    simplify_epsilon: float = 2.0,
+    trace_debug_artifacts: bool = False,
+    autotrace_centerline: bool = True,
+    autotrace_background_color: str = "",
+    autotrace_color_count: int = 0,
+    autotrace_corner_always_threshold: float = 60.0,
+    autotrace_corner_surround: int = 4,
+    autotrace_corner_threshold: float = 100.0,
+    autotrace_despeckle_level: int = 0,
+    autotrace_despeckle_tightness: float = 2.0,
+    autotrace_dpi: int = 0,
+    autotrace_error_threshold: float = 2.0,
+    autotrace_filter_iterations: int = 4,
+    autotrace_line_reversion_threshold: float = 0.01,
+    autotrace_line_threshold: float = 1.0,
+    autotrace_noise_removal: float = 0.99,
+    autotrace_preserve_width: bool = False,
+    autotrace_remove_adjacent_corners: bool = False,
+    autotrace_tangent_surround: int = 3,
+    autotrace_width_weight_factor: float = 6.0,
+    autotrace_report_progress: bool = False,
+    autotrace_debug_bitmap: bool = False,
+    vpype_linemerge_tolerance_px: float = 1.0,
+    forkclean_max_search_length_px: float = 24.0,
+    forkclean_min_short_length_px: float = 3.0,
+    forkclean_angle_threshold_deg: float = 110.0,
+    forkclean_node_tolerance_px: float = 1.0,
+    forkclean_passes: int = 1,
+    vpype_linesimplify_tolerance_px: float = 0.3,
     autotrace_command: Command = "autotrace",
     vpype_command: Command = "vpype",
     progress_callback: ProgressCallback | None = None,
@@ -384,8 +492,31 @@ def trace_image_to_svg(
     _notify_progress(progress_callback, f"已生成 AutoTrace 输入位图：{input_bitmap}")
 
     _run_trace_command(
-        _command_prefix(autotrace_command)
-        + [str(input_bitmap), "-centerline", "-output-file", str(raw_svg)],
+        _build_autotrace_args(
+            autotrace_command,
+            input_bitmap,
+            raw_svg,
+            autotrace_centerline=autotrace_centerline,
+            autotrace_background_color=autotrace_background_color,
+            autotrace_color_count=autotrace_color_count,
+            autotrace_corner_always_threshold=autotrace_corner_always_threshold,
+            autotrace_corner_surround=autotrace_corner_surround,
+            autotrace_corner_threshold=autotrace_corner_threshold,
+            autotrace_despeckle_level=autotrace_despeckle_level,
+            autotrace_despeckle_tightness=autotrace_despeckle_tightness,
+            autotrace_dpi=autotrace_dpi,
+            autotrace_error_threshold=autotrace_error_threshold,
+            autotrace_filter_iterations=autotrace_filter_iterations,
+            autotrace_line_reversion_threshold=autotrace_line_reversion_threshold,
+            autotrace_line_threshold=autotrace_line_threshold,
+            autotrace_noise_removal=autotrace_noise_removal,
+            autotrace_preserve_width=autotrace_preserve_width,
+            autotrace_remove_adjacent_corners=autotrace_remove_adjacent_corners,
+            autotrace_tangent_surround=autotrace_tangent_surround,
+            autotrace_width_weight_factor=autotrace_width_weight_factor,
+            autotrace_report_progress=autotrace_report_progress,
+            autotrace_debug_bitmap=autotrace_debug_bitmap,
+        ),
         work,
         progress_callback=progress_callback,
         running_message="使用 AutoTrace 将位图转换为中心线 SVG",
@@ -394,23 +525,60 @@ def trace_image_to_svg(
     if not raw_svg.exists():
         raise TraceToolError(f"AutoTrace 未生成 SVG：{raw_svg}")
 
-    tolerance = max(0.0, float(simplify_epsilon))
-    vpype_args = _command_prefix(vpype_command) + [
+    linemerge_args = [
         "read",
         str(raw_svg),
         "linemerge",
-        "linesimplify",
+        "-t",
+        f"{max(0.0, float(vpype_linemerge_tolerance_px))}px",
     ]
-    if tolerance > 0:
-        vpype_args += ["--tolerance", f"{tolerance}px"]
-    vpype_args += ["linesort", "write", str(optimized_svg)]
-    _run_trace_command(
-        vpype_args,
-        work,
-        progress_callback=progress_callback,
-        running_message="使用 vpype 合并、简化并排序 SVG 路径",
-        finished_message="vpype 已生成 trace_optimized.svg",
-    )
+    forkclean_args = [
+        "forkclean",
+        "--max-search-length",
+        f"{max(0.0, float(forkclean_max_search_length_px))}px",
+        "--min-short-length",
+        f"{max(0.0, float(forkclean_min_short_length_px))}px",
+        "--angle-threshold",
+        f"{max(0.0, float(forkclean_angle_threshold_deg))}deg",
+        "--node-tolerance",
+        f"{max(0.0, float(forkclean_node_tolerance_px))}px",
+        "--passes",
+        str(max(1, int(forkclean_passes))),
+    ]
+    linesimplify_args = [
+        "linesimplify",
+        "-t",
+        f"{max(0.0, float(vpype_linesimplify_tolerance_px))}px",
+    ]
+    linesort_args = ["linesort", "--two-opt"]
+    if trace_debug_artifacts:
+        debug_steps = [
+            (raw_svg, "trace_linemerge.svg", ["linemerge", "-t", f"{max(0.0, float(vpype_linemerge_tolerance_px))}px"], "vpype linemerge"),
+            (work / "trace_linemerge.svg", "trace_forkclean.svg", forkclean_args, "vpype forkclean"),
+            (work / "trace_forkclean.svg", "trace_linesimplify.svg", linesimplify_args, "vpype linesimplify"),
+            (work / "trace_linesimplify.svg", optimized_svg.name, linesort_args, "vpype linesort"),
+        ]
+        for source_svg, output_name, stage_args, label in debug_steps:
+            output_svg = work / output_name
+            _run_trace_command(
+                _command_prefix(vpype_command) + ["read", str(source_svg)] + stage_args + ["write", str(output_svg)],
+                work,
+                progress_callback=progress_callback,
+                running_message=f"使用 {label} 生成 {output_name}",
+                finished_message=f"{label} 已生成 {output_name}",
+            )
+    else:
+        vpype_args = _command_prefix(vpype_command) + linemerge_args + forkclean_args + linesimplify_args + linesort_args + [
+            "write",
+            str(optimized_svg),
+        ]
+        _run_trace_command(
+            vpype_args,
+            work,
+            progress_callback=progress_callback,
+            running_message="使用 vpype 合并、清理、简化并排序 SVG 路径",
+            finished_message="vpype 已生成 trace_optimized.svg",
+        )
     if not optimized_svg.exists():
         raise TraceToolError(f"vpype 未生成优化 SVG：{optimized_svg}")
     return optimized_svg
@@ -418,15 +586,39 @@ def trace_image_to_svg(
 
 def generate_strokes(
     image: Image.Image,
-    simplify_epsilon: float = 2.0,
-    min_points: int = 2,
     alpha_threshold: int = 20,
     mask_dilation_iterations: int = 0,
     mask_erosion_iterations: int = 0,
     mask_morphology_order: str = MASK_MORPHOLOGY_DILATE_THEN_ERODE,
     min_component_area: int = 12,
-    min_stroke_length_px: float = 6.0,
-    svg_sample_step_px: float = 2.0,
+    trace_debug_artifacts: bool = False,
+    autotrace_centerline: bool = True,
+    autotrace_background_color: str = "",
+    autotrace_color_count: int = 0,
+    autotrace_corner_always_threshold: float = 60.0,
+    autotrace_corner_surround: int = 4,
+    autotrace_corner_threshold: float = 100.0,
+    autotrace_despeckle_level: int = 0,
+    autotrace_despeckle_tightness: float = 2.0,
+    autotrace_dpi: int = 0,
+    autotrace_error_threshold: float = 2.0,
+    autotrace_filter_iterations: int = 4,
+    autotrace_line_reversion_threshold: float = 0.01,
+    autotrace_line_threshold: float = 1.0,
+    autotrace_noise_removal: float = 0.99,
+    autotrace_preserve_width: bool = False,
+    autotrace_remove_adjacent_corners: bool = False,
+    autotrace_tangent_surround: int = 3,
+    autotrace_width_weight_factor: float = 6.0,
+    autotrace_report_progress: bool = False,
+    autotrace_debug_bitmap: bool = False,
+    vpype_linemerge_tolerance_px: float = 1.0,
+    forkclean_max_search_length_px: float = 24.0,
+    forkclean_min_short_length_px: float = 3.0,
+    forkclean_angle_threshold_deg: float = 110.0,
+    forkclean_node_tolerance_px: float = 1.0,
+    forkclean_passes: int = 1,
+    vpype_linesimplify_tolerance_px: float = 0.3,
     work_dir: str | Path | None = None,
     autotrace_command: Command = "autotrace",
     vpype_command: Command = "vpype",
@@ -437,15 +629,39 @@ def generate_strokes(
         with tempfile.TemporaryDirectory(prefix="writing_machine_trace_") as tmp:
             return generate_strokes(
                 image,
-                simplify_epsilon=simplify_epsilon,
-                min_points=min_points,
                 alpha_threshold=alpha_threshold,
                 mask_dilation_iterations=mask_dilation_iterations,
                 mask_erosion_iterations=mask_erosion_iterations,
                 mask_morphology_order=mask_morphology_order,
                 min_component_area=min_component_area,
-                min_stroke_length_px=min_stroke_length_px,
-                svg_sample_step_px=svg_sample_step_px,
+                trace_debug_artifacts=trace_debug_artifacts,
+                autotrace_centerline=autotrace_centerline,
+                autotrace_background_color=autotrace_background_color,
+                autotrace_color_count=autotrace_color_count,
+                autotrace_corner_always_threshold=autotrace_corner_always_threshold,
+                autotrace_corner_surround=autotrace_corner_surround,
+                autotrace_corner_threshold=autotrace_corner_threshold,
+                autotrace_despeckle_level=autotrace_despeckle_level,
+                autotrace_despeckle_tightness=autotrace_despeckle_tightness,
+                autotrace_dpi=autotrace_dpi,
+                autotrace_error_threshold=autotrace_error_threshold,
+                autotrace_filter_iterations=autotrace_filter_iterations,
+                autotrace_line_reversion_threshold=autotrace_line_reversion_threshold,
+                autotrace_line_threshold=autotrace_line_threshold,
+                autotrace_noise_removal=autotrace_noise_removal,
+                autotrace_preserve_width=autotrace_preserve_width,
+                autotrace_remove_adjacent_corners=autotrace_remove_adjacent_corners,
+                autotrace_tangent_surround=autotrace_tangent_surround,
+                autotrace_width_weight_factor=autotrace_width_weight_factor,
+                autotrace_report_progress=autotrace_report_progress,
+                autotrace_debug_bitmap=autotrace_debug_bitmap,
+                vpype_linemerge_tolerance_px=vpype_linemerge_tolerance_px,
+                forkclean_max_search_length_px=forkclean_max_search_length_px,
+                forkclean_min_short_length_px=forkclean_min_short_length_px,
+                forkclean_angle_threshold_deg=forkclean_angle_threshold_deg,
+                forkclean_node_tolerance_px=forkclean_node_tolerance_px,
+                forkclean_passes=forkclean_passes,
+                vpype_linesimplify_tolerance_px=vpype_linesimplify_tolerance_px,
                 work_dir=tmp,
                 autotrace_command=autotrace_command,
                 vpype_command=vpype_command,
@@ -460,20 +676,42 @@ def generate_strokes(
         mask_erosion_iterations=mask_erosion_iterations,
         mask_morphology_order=mask_morphology_order,
         min_component_area=min_component_area,
-        simplify_epsilon=simplify_epsilon,
+        trace_debug_artifacts=trace_debug_artifacts,
+        autotrace_centerline=autotrace_centerline,
+        autotrace_background_color=autotrace_background_color,
+        autotrace_color_count=autotrace_color_count,
+        autotrace_corner_always_threshold=autotrace_corner_always_threshold,
+        autotrace_corner_surround=autotrace_corner_surround,
+        autotrace_corner_threshold=autotrace_corner_threshold,
+        autotrace_despeckle_level=autotrace_despeckle_level,
+        autotrace_despeckle_tightness=autotrace_despeckle_tightness,
+        autotrace_dpi=autotrace_dpi,
+        autotrace_error_threshold=autotrace_error_threshold,
+        autotrace_filter_iterations=autotrace_filter_iterations,
+        autotrace_line_reversion_threshold=autotrace_line_reversion_threshold,
+        autotrace_line_threshold=autotrace_line_threshold,
+        autotrace_noise_removal=autotrace_noise_removal,
+        autotrace_preserve_width=autotrace_preserve_width,
+        autotrace_remove_adjacent_corners=autotrace_remove_adjacent_corners,
+        autotrace_tangent_surround=autotrace_tangent_surround,
+        autotrace_width_weight_factor=autotrace_width_weight_factor,
+        autotrace_report_progress=autotrace_report_progress,
+        autotrace_debug_bitmap=autotrace_debug_bitmap,
+        vpype_linemerge_tolerance_px=vpype_linemerge_tolerance_px,
+        forkclean_max_search_length_px=forkclean_max_search_length_px,
+        forkclean_min_short_length_px=forkclean_min_short_length_px,
+        forkclean_angle_threshold_deg=forkclean_angle_threshold_deg,
+        forkclean_node_tolerance_px=forkclean_node_tolerance_px,
+        forkclean_passes=forkclean_passes,
+        vpype_linesimplify_tolerance_px=vpype_linesimplify_tolerance_px,
         autotrace_command=autotrace_command,
         vpype_command=vpype_command,
         progress_callback=progress_callback,
     )
     if optimized_svg is None:
         return []
-    _notify_progress(progress_callback, "正在解析优化后的 SVG 并采样为轨迹点...")
-    strokes = _svg_to_strokes(
-        optimized_svg,
-        sample_step_px=svg_sample_step_px,
-        min_points=min_points,
-        min_stroke_length_px=min_stroke_length_px,
-    )
+    _notify_progress(progress_callback, "正在解析优化后的 SVG 折线为轨迹点...")
+    strokes = _svg_to_strokes(optimized_svg)
     points = sum(len(stroke.points) for stroke in strokes)
     _notify_progress(progress_callback, f"SVG 解析完成：{len(strokes)} 条 stroke，{points} 个点。")
     return strokes

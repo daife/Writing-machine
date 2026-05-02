@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vpype-forkclean"
+version = "0.2.0"
+description = "vpype plugin for pruning short terminal chains at high-turn multi-fork junctions."
+requires-python = ">=3.9"
+dependencies = ["vpype>=1.12", "click>=8.0", "numpy>=1.20"]
+
+[project.entry-points."vpype.plugins"]
+forkclean = "vpype_forkclean:forkclean"

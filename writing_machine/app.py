@@ -364,30 +364,82 @@ class WritingMachineApp:
 
     def save_stroke_config_from_ui(self) -> None:
         required = (
-            "epsilon_var",
             "stroke_alpha_threshold_var",
-            "stroke_min_points_var",
+            "trace_debug_artifacts_var",
             "mask_dilation_iterations_var",
             "mask_erosion_iterations_var",
             "mask_morphology_order_var",
-            "svg_sample_step_var",
             "min_component_area_var",
-            "min_stroke_length_var",
+            "autotrace_centerline_var",
+            "autotrace_background_color_var",
+            "autotrace_color_count_var",
+            "autotrace_corner_always_threshold_var",
+            "autotrace_corner_surround_var",
+            "autotrace_corner_threshold_var",
+            "autotrace_despeckle_level_var",
+            "autotrace_despeckle_tightness_var",
+            "autotrace_dpi_var",
+            "autotrace_error_threshold_var",
+            "autotrace_filter_iterations_var",
+            "autotrace_line_reversion_threshold_var",
+            "autotrace_line_threshold_var",
+            "autotrace_noise_removal_var",
+            "autotrace_preserve_width_var",
+            "autotrace_remove_adjacent_corners_var",
+            "autotrace_tangent_surround_var",
+            "autotrace_width_weight_factor_var",
+            "autotrace_report_progress_var",
+            "autotrace_debug_bitmap_var",
+            "vpype_linemerge_tolerance_var",
+            "forkclean_max_search_length_var",
+            "forkclean_min_short_length_var",
+            "forkclean_angle_threshold_var",
+            "forkclean_node_tolerance_var",
+            "forkclean_passes_var",
+            "vpype_linesimplify_tolerance_var",
         )
         if not all(hasattr(self, name) for name in required):
             return
         try:
-            self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
+            self.state.stroke.trace_debug_artifacts = bool(self.trace_debug_artifacts_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
-            self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.mask_morphology_order = mask_morphology_order_value(
                 str(self.mask_morphology_order_var.get())
             )
-            self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
-            self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
+            self.state.stroke.autotrace_centerline = bool(self.autotrace_centerline_var.get())
+            self.state.stroke.autotrace_background_color = self.autotrace_background_color_var.get().strip()
+            self.state.stroke.autotrace_color_count = int(self.autotrace_color_count_var.get())
+            self.state.stroke.autotrace_corner_always_threshold = float(self.autotrace_corner_always_threshold_var.get())
+            self.state.stroke.autotrace_corner_surround = int(self.autotrace_corner_surround_var.get())
+            self.state.stroke.autotrace_corner_threshold = float(self.autotrace_corner_threshold_var.get())
+            self.state.stroke.autotrace_despeckle_level = int(self.autotrace_despeckle_level_var.get())
+            self.state.stroke.autotrace_despeckle_tightness = float(self.autotrace_despeckle_tightness_var.get())
+            self.state.stroke.autotrace_dpi = int(self.autotrace_dpi_var.get())
+            self.state.stroke.autotrace_error_threshold = float(self.autotrace_error_threshold_var.get())
+            self.state.stroke.autotrace_filter_iterations = int(self.autotrace_filter_iterations_var.get())
+            self.state.stroke.autotrace_line_reversion_threshold = float(
+                self.autotrace_line_reversion_threshold_var.get()
+            )
+            self.state.stroke.autotrace_line_threshold = float(self.autotrace_line_threshold_var.get())
+            self.state.stroke.autotrace_noise_removal = float(self.autotrace_noise_removal_var.get())
+            self.state.stroke.autotrace_preserve_width = bool(self.autotrace_preserve_width_var.get())
+            self.state.stroke.autotrace_remove_adjacent_corners = bool(
+                self.autotrace_remove_adjacent_corners_var.get()
+            )
+            self.state.stroke.autotrace_tangent_surround = int(self.autotrace_tangent_surround_var.get())
+            self.state.stroke.autotrace_width_weight_factor = float(self.autotrace_width_weight_factor_var.get())
+            self.state.stroke.autotrace_report_progress = bool(self.autotrace_report_progress_var.get())
+            self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
+            self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
+            self.state.stroke.forkclean_min_short_length_px = float(self.forkclean_min_short_length_var.get())
+            self.state.stroke.forkclean_angle_threshold_deg = float(self.forkclean_angle_threshold_var.get())
+            self.state.stroke.forkclean_node_tolerance_px = float(self.forkclean_node_tolerance_var.get())
+            self.state.stroke.forkclean_passes = int(self.forkclean_passes_var.get())
+            self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
@@ -449,16 +501,40 @@ class WritingMachineApp:
                 self.ref_canvas.set_image(self.ref_edit_image)
         if hasattr(self, "rotate_trajectory_180_var"):
             self.rotate_trajectory_180_var.set(self.state.rotate_trajectory_180)
-        if hasattr(self, "epsilon_var"):
-            self.epsilon_var.set(self.state.stroke.simplify_epsilon)
+        if hasattr(self, "vpype_linemerge_tolerance_var"):
+            self.trace_debug_artifacts_var.set(self.state.stroke.trace_debug_artifacts)
             self.stroke_alpha_threshold_var.set(self.state.stroke.alpha_threshold)
-            self.stroke_min_points_var.set(self.state.stroke.min_points)
             self.mask_dilation_iterations_var.set(self.state.stroke.mask_dilation_iterations)
             self.mask_erosion_iterations_var.set(self.state.stroke.mask_erosion_iterations)
             self.mask_morphology_order_var.set(mask_morphology_order_label(self.state.stroke.mask_morphology_order))
-            self.svg_sample_step_var.set(self.state.stroke.svg_sample_step_px)
             self.min_component_area_var.set(self.state.stroke.min_component_area)
-            self.min_stroke_length_var.set(self.state.stroke.min_stroke_length_px)
+            self.autotrace_centerline_var.set(self.state.stroke.autotrace_centerline)
+            self.autotrace_background_color_var.set(self.state.stroke.autotrace_background_color)
+            self.autotrace_color_count_var.set(self.state.stroke.autotrace_color_count)
+            self.autotrace_corner_always_threshold_var.set(self.state.stroke.autotrace_corner_always_threshold)
+            self.autotrace_corner_surround_var.set(self.state.stroke.autotrace_corner_surround)
+            self.autotrace_corner_threshold_var.set(self.state.stroke.autotrace_corner_threshold)
+            self.autotrace_despeckle_level_var.set(self.state.stroke.autotrace_despeckle_level)
+            self.autotrace_despeckle_tightness_var.set(self.state.stroke.autotrace_despeckle_tightness)
+            self.autotrace_dpi_var.set(self.state.stroke.autotrace_dpi)
+            self.autotrace_error_threshold_var.set(self.state.stroke.autotrace_error_threshold)
+            self.autotrace_filter_iterations_var.set(self.state.stroke.autotrace_filter_iterations)
+            self.autotrace_line_reversion_threshold_var.set(self.state.stroke.autotrace_line_reversion_threshold)
+            self.autotrace_line_threshold_var.set(self.state.stroke.autotrace_line_threshold)
+            self.autotrace_noise_removal_var.set(self.state.stroke.autotrace_noise_removal)
+            self.autotrace_preserve_width_var.set(self.state.stroke.autotrace_preserve_width)
+            self.autotrace_remove_adjacent_corners_var.set(self.state.stroke.autotrace_remove_adjacent_corners)
+            self.autotrace_tangent_surround_var.set(self.state.stroke.autotrace_tangent_surround)
+            self.autotrace_width_weight_factor_var.set(self.state.stroke.autotrace_width_weight_factor)
+            self.autotrace_report_progress_var.set(self.state.stroke.autotrace_report_progress)
+            self.autotrace_debug_bitmap_var.set(self.state.stroke.autotrace_debug_bitmap)
+            self.vpype_linemerge_tolerance_var.set(self.state.stroke.vpype_linemerge_tolerance_px)
+            self.forkclean_max_search_length_var.set(self.state.stroke.forkclean_max_search_length_px)
+            self.forkclean_min_short_length_var.set(self.state.stroke.forkclean_min_short_length_px)
+            self.forkclean_angle_threshold_var.set(self.state.stroke.forkclean_angle_threshold_deg)
+            self.forkclean_node_tolerance_var.set(self.state.stroke.forkclean_node_tolerance_px)
+            self.forkclean_passes_var.set(self.state.stroke.forkclean_passes)
+            self.vpype_linesimplify_tolerance_var.set(self.state.stroke.vpype_linesimplify_tolerance_px)
         if hasattr(self, "eraser_radius_var"):
             self.eraser_radius_var.set(self.state.eraser_radius)
         if hasattr(self, "layer_import_threshold_var"):
@@ -515,26 +591,106 @@ class WritingMachineApp:
         right = ttk.Frame(tab)
         right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
-        def add_stroke_spin(label: str, var: tk.Variable, from_: float, to: float, increment: float, tip: str) -> None:
-            label_widget = ttk.Label(left, text=label)
-            label_widget.pack(anchor="w", pady=(7, 0))
-            spin = ttk.Spinbox(left, from_=from_, to=to, increment=increment, textvariable=var)
-            spin.pack(fill="x")
+        params_frame = ttk.Frame(left)
+        params_frame.pack(fill="x")
+        for column in (1, 3, 5):
+            params_frame.columnconfigure(column, weight=1)
+        grid_row = 0
+
+        def add_param_spin(
+            label: str,
+            var: tk.Variable,
+            from_: float,
+            to: float,
+            increment: float,
+            tip: str,
+            width: int = 8,
+        ) -> None:
+            nonlocal grid_row
+            row = grid_row // 3
+            column = (grid_row % 3) * 2
+            label_widget = ttk.Label(params_frame, text=label)
+            label_widget.grid(row=row, column=column, sticky="w", padx=(0, 4), pady=2)
+            spin = ttk.Spinbox(params_frame, from_=from_, to=to, increment=increment, textvariable=var, width=width)
+            spin.grid(row=row, column=column + 1, sticky="ew", padx=(0, 10), pady=2)
             self.add_tooltip(label_widget, tip)
             self.add_tooltip(spin, tip)
+            grid_row += 1
 
+        def add_param_entry(label: str, var: tk.Variable, tip: str, width: int = 8) -> None:
+            nonlocal grid_row
+            row = grid_row // 3
+            column = (grid_row % 3) * 2
+            label_widget = ttk.Label(params_frame, text=label)
+            label_widget.grid(row=row, column=column, sticky="w", padx=(0, 4), pady=2)
+            entry = ttk.Entry(params_frame, textvariable=var, width=width)
+            entry.grid(row=row, column=column + 1, sticky="ew", padx=(0, 10), pady=2)
+            self.add_tooltip(label_widget, tip)
+            self.add_tooltip(entry, tip)
+            grid_row += 1
+
+        def add_param_check(label: str, var: tk.BooleanVar, tip: str) -> ttk.Checkbutton:
+            nonlocal grid_row
+            row = grid_row // 3
+            column = (grid_row % 3) * 2
+            check = ttk.Checkbutton(params_frame, text=label, variable=var)
+            check.grid(row=row, column=column, columnspan=2, sticky="w", padx=(0, 10), pady=2)
+            self.add_tooltip(check, tip)
+            grid_row += 1
+            return check
+
+        self.trace_debug_artifacts_var = tk.BooleanVar(value=self.state.stroke.trace_debug_artifacts)
         self.stroke_alpha_threshold_var = tk.IntVar(value=self.state.stroke.alpha_threshold)
         self.mask_dilation_iterations_var = tk.IntVar(value=self.state.stroke.mask_dilation_iterations)
         self.mask_erosion_iterations_var = tk.IntVar(value=self.state.stroke.mask_erosion_iterations)
         self.mask_morphology_order_var = tk.StringVar(
             value=mask_morphology_order_label(self.state.stroke.mask_morphology_order)
         )
-        self.svg_sample_step_var = tk.DoubleVar(value=self.state.stroke.svg_sample_step_px)
         self.min_component_area_var = tk.IntVar(value=self.state.stroke.min_component_area)
-        self.min_stroke_length_var = tk.DoubleVar(value=self.state.stroke.min_stroke_length_px)
-        self.epsilon_var = tk.DoubleVar(value=self.state.stroke.simplify_epsilon)
-        self.stroke_min_points_var = tk.IntVar(value=self.state.stroke.min_points)
-        add_stroke_spin(
+        self.autotrace_centerline_var = tk.BooleanVar(value=self.state.stroke.autotrace_centerline)
+        self.autotrace_background_color_var = tk.StringVar(value=self.state.stroke.autotrace_background_color)
+        self.autotrace_color_count_var = tk.IntVar(value=self.state.stroke.autotrace_color_count)
+        self.autotrace_corner_always_threshold_var = tk.DoubleVar(
+            value=self.state.stroke.autotrace_corner_always_threshold
+        )
+        self.autotrace_corner_surround_var = tk.IntVar(value=self.state.stroke.autotrace_corner_surround)
+        self.autotrace_corner_threshold_var = tk.DoubleVar(value=self.state.stroke.autotrace_corner_threshold)
+        self.autotrace_despeckle_level_var = tk.IntVar(value=self.state.stroke.autotrace_despeckle_level)
+        self.autotrace_despeckle_tightness_var = tk.DoubleVar(value=self.state.stroke.autotrace_despeckle_tightness)
+        self.autotrace_dpi_var = tk.IntVar(value=self.state.stroke.autotrace_dpi)
+        self.autotrace_error_threshold_var = tk.DoubleVar(value=self.state.stroke.autotrace_error_threshold)
+        self.autotrace_filter_iterations_var = tk.IntVar(value=self.state.stroke.autotrace_filter_iterations)
+        self.autotrace_line_reversion_threshold_var = tk.DoubleVar(
+            value=self.state.stroke.autotrace_line_reversion_threshold
+        )
+        self.autotrace_line_threshold_var = tk.DoubleVar(value=self.state.stroke.autotrace_line_threshold)
+        self.autotrace_noise_removal_var = tk.DoubleVar(value=self.state.stroke.autotrace_noise_removal)
+        self.autotrace_preserve_width_var = tk.BooleanVar(value=self.state.stroke.autotrace_preserve_width)
+        self.autotrace_remove_adjacent_corners_var = tk.BooleanVar(
+            value=self.state.stroke.autotrace_remove_adjacent_corners
+        )
+        self.autotrace_tangent_surround_var = tk.IntVar(value=self.state.stroke.autotrace_tangent_surround)
+        self.autotrace_width_weight_factor_var = tk.DoubleVar(value=self.state.stroke.autotrace_width_weight_factor)
+        self.autotrace_report_progress_var = tk.BooleanVar(value=self.state.stroke.autotrace_report_progress)
+        self.autotrace_debug_bitmap_var = tk.BooleanVar(value=self.state.stroke.autotrace_debug_bitmap)
+        self.vpype_linemerge_tolerance_var = tk.DoubleVar(value=self.state.stroke.vpype_linemerge_tolerance_px)
+        self.forkclean_max_search_length_var = tk.DoubleVar(value=self.state.stroke.forkclean_max_search_length_px)
+        self.forkclean_min_short_length_var = tk.DoubleVar(value=self.state.stroke.forkclean_min_short_length_px)
+        self.forkclean_angle_threshold_var = tk.DoubleVar(value=self.state.stroke.forkclean_angle_threshold_deg)
+        self.forkclean_node_tolerance_var = tk.DoubleVar(value=self.state.stroke.forkclean_node_tolerance_px)
+        self.forkclean_passes_var = tk.IntVar(value=self.state.stroke.forkclean_passes)
+        self.vpype_linesimplify_tolerance_var = tk.DoubleVar(value=self.state.stroke.vpype_linesimplify_tolerance_px)
+        add_param_check(
+            "Debug 中间 SVG",
+            self.trace_debug_artifacts_var,
+            "打开后轨迹生成会额外输出 trace_linemerge.svg、trace_forkclean.svg、trace_linesimplify.svg 等中间态文件。",
+        )
+        add_param_check(
+            "AutoTrace centerline",
+            self.autotrace_centerline_var,
+            "传给 AutoTrace -centerline。关闭后会按轮廓追踪，通常不适合书写机中心线轨迹。",
+        )
+        add_param_spin(
             "Alpha 阈值",
             self.stroke_alpha_threshold_var,
             0,
@@ -542,7 +698,7 @@ class WritingMachineApp:
             1,
             "在“从透明字迹图生成轨迹”时生效。融合字迹图中 alpha 大于该值的像素会被视为要写的字迹区域；提高它会忽略半透明边缘。",
         )
-        add_stroke_spin(
+        add_param_spin(
             "轨迹膨胀次数",
             self.mask_dilation_iterations_var,
             0,
@@ -550,7 +706,7 @@ class WritingMachineApp:
             1,
             "在轨迹生成时生效。会把字迹 mask 向外扩一圈，可连接断裂笔画或加粗细线；次数过大会粘连相邻笔画。",
         )
-        add_stroke_spin(
+        add_param_spin(
             "轨迹腐蚀次数",
             self.mask_erosion_iterations_var,
             0,
@@ -558,19 +714,23 @@ class WritingMachineApp:
             1,
             "在轨迹生成时生效。会把字迹 mask 向内收缩，可抵消膨胀或去掉细小毛边；次数过大会吃掉细笔画。",
         )
-        order_label = ttk.Label(left, text="腐蚀/膨胀顺序")
-        order_label.pack(anchor="w", pady=(7, 0))
+        order_label = ttk.Label(params_frame, text="腐蚀/膨胀顺序")
+        row = grid_row // 3
+        column = (grid_row % 3) * 2
+        order_label.grid(row=row, column=column, sticky="w", padx=(0, 4), pady=2)
         order_combo = ttk.Combobox(
-            left,
+            params_frame,
             values=tuple(MASK_MORPHOLOGY_ORDER_VALUES.keys()),
             textvariable=self.mask_morphology_order_var,
             state="readonly",
+            width=12,
         )
-        order_combo.pack(fill="x")
+        order_combo.grid(row=row, column=column + 1, sticky="ew", padx=(0, 10), pady=2)
+        grid_row += 1
         order_tip = "在轨迹生成时生效。选择先膨胀后腐蚀可补小断口；选择先腐蚀后膨胀可先去毛边和孤立噪点。"
         self.add_tooltip(order_label, order_tip)
         self.add_tooltip(order_combo, order_tip)
-        add_stroke_spin(
+        add_param_spin(
             "最小噪点面积(px)",
             self.min_component_area_var,
             1,
@@ -578,48 +738,119 @@ class WritingMachineApp:
             1,
             "在送入 AutoTrace 之前生效。连通域面积小于该值的透明字迹碎点会被删除；孤立点多时调大，标点丢失时调小。",
         )
-        add_stroke_spin(
-            "路径简化 epsilon(px)",
-            self.epsilon_var,
-            0.1,
-            20.0,
-            0.1,
-            "在 vpype linesimplify 阶段生效。数值越大，输出轨迹点越少、线条越平滑，但可能损失笔画细节；会影响后续 G-code。",
+        add_param_entry(
+            "AT 背景色",
+            self.autotrace_background_color_var,
+            "传给 AutoTrace -background-color。留空表示不指定；可填 FFFFFF 这类 6 位十六进制颜色。",
         )
-        add_stroke_spin(
-            "SVG 采样步长(px)",
-            self.svg_sample_step_var,
-            0.5,
-            20.0,
-            0.5,
-            "在读取 vpype 优化后的 SVG 时生效。数值越小，曲线采样越密、点更多；数值越大，轨迹更轻但弯曲处更粗略。",
+        add_param_spin("AT 色彩数", self.autotrace_color_count_var, 0, 256, 1, "传给 AutoTrace -color-count。0 表示不做颜色量化。")
+        add_param_spin("AT 角点必保", self.autotrace_corner_always_threshold_var, 0, 180, 1, "传给 -corner-always-threshold。")
+        add_param_spin("AT 角点范围", self.autotrace_corner_surround_var, 0, 20, 1, "传给 -corner-surround。")
+        add_param_spin("AT 角点阈值", self.autotrace_corner_threshold_var, 0, 180, 1, "传给 -corner-threshold。")
+        add_param_spin("AT 去斑等级", self.autotrace_despeckle_level_var, 0, 20, 1, "传给 -despeckle-level。")
+        add_param_spin("AT 去斑强度", self.autotrace_despeckle_tightness_var, 0, 8, 0.1, "传给 -despeckle-tightness。")
+        add_param_spin("AT DPI", self.autotrace_dpi_var, 0, 1200, 1, "传给 -dpi。0 表示不传该参数。")
+        add_param_spin("AT 误差阈值", self.autotrace_error_threshold_var, 0, 20, 0.1, "传给 -error-threshold。")
+        add_param_spin("AT 平滑轮数", self.autotrace_filter_iterations_var, 0, 20, 1, "传给 -filter-iterations。")
+        add_param_spin("AT 直线回退", self.autotrace_line_reversion_threshold_var, 0, 1, 0.01, "传给 -line-reversion-threshold。")
+        add_param_spin("AT 直线阈值", self.autotrace_line_threshold_var, 0, 20, 0.1, "传给 -line-threshold。")
+        add_param_spin("AT 去噪比例", self.autotrace_noise_removal_var, 0, 1, 0.01, "传给 -noise-removal。")
+        add_param_spin("AT 切线范围", self.autotrace_tangent_surround_var, 0, 20, 1, "传给 -tangent-surround。")
+        add_param_spin("AT 线宽权重", self.autotrace_width_weight_factor_var, 0, 30, 0.1, "传给 -width-weight-factor。")
+        add_param_check("AT 保留线宽", self.autotrace_preserve_width_var, "传给 AutoTrace -preserve-width。")
+        add_param_check("AT 移除相邻角", self.autotrace_remove_adjacent_corners_var, "传给 AutoTrace -remove-adjacent-corners。")
+        add_param_check("AT 进度输出", self.autotrace_report_progress_var, "传给 AutoTrace -report-progress。")
+        add_param_check("AT 调试位图", self.autotrace_debug_bitmap_var, "传给 AutoTrace -debug-bitmap，会输出 bitmap dump。")
+        add_param_spin(
+            "linemerge 容差(px)",
+            self.vpype_linemerge_tolerance_var,
+            0.0,
+            10.0,
+            0.1,
+            "传给 vpype linemerge -t。用于合并距离足够近的线段端点；过大会误合并相邻笔画。",
         )
-        add_stroke_spin(
-            "最短笔画长度(px)",
-            self.min_stroke_length_var,
+        add_param_spin(
+            "forkclean 最大搜索(px)",
+            self.forkclean_max_search_length_var,
+            0.0,
+            200.0,
+            1.0,
+            "传给 forkclean --max-search-length。达到该距离的分支会被视为长分支，用于判断岔路结构。",
+        )
+        add_param_spin(
+            "forkclean 短枝阈值(px)",
+            self.forkclean_min_short_length_var,
             0.0,
             80.0,
             0.5,
-            "在读取优化 SVG 之后生效。长度短于该值的 stroke 会被丢弃，用于过滤碎线和孤立短点；需要保留标点时调小。",
+            "传给 forkclean --min-short-length。短于该值的末端短枝在满足角度条件时会被删除。",
         )
-        add_stroke_spin(
-            "每笔最少点数",
-            self.stroke_min_points_var,
-            2,
-            20,
+        add_param_spin(
+            "forkclean 角度阈值(deg)",
+            self.forkclean_angle_threshold_var,
+            0.0,
+            180.0,
+            1.0,
+            "传给 forkclean --angle-threshold。只有长分支之间的最小转角超过该值时，才删除末端短枝。",
+        )
+        add_param_spin(
+            "forkclean 节点容差(px)",
+            self.forkclean_node_tolerance_var,
+            0.0,
+            10.0,
+            0.1,
+            "传给 forkclean --node-tolerance。用于把近似重合的端点聚类成同一图节点。",
+        )
+        add_param_spin(
+            "forkclean 执行轮数",
+            self.forkclean_passes_var,
             1,
-            "在轨迹生成筛选 stroke 时生效。点数少于该值的轨迹会被丢弃，用于过滤碎点和极短噪声。",
+            10,
+            1,
+            "传给 forkclean --passes。重复清理轮数，删除一批短枝后可能暴露新的短枝。",
+        )
+        add_param_spin(
+            "linesimplify 容差(px)",
+            self.vpype_linesimplify_tolerance_var,
+            0.0,
+            20.0,
+            0.1,
+            "传给 vpype linesimplify -t。数值越大点越少、线条越简化，但可能损失笔画细节。",
         )
         for var in (
+            self.trace_debug_artifacts_var,
             self.stroke_alpha_threshold_var,
             self.mask_dilation_iterations_var,
             self.mask_erosion_iterations_var,
             self.mask_morphology_order_var,
-            self.svg_sample_step_var,
             self.min_component_area_var,
-            self.min_stroke_length_var,
-            self.epsilon_var,
-            self.stroke_min_points_var,
+            self.autotrace_centerline_var,
+            self.autotrace_background_color_var,
+            self.autotrace_color_count_var,
+            self.autotrace_corner_always_threshold_var,
+            self.autotrace_corner_surround_var,
+            self.autotrace_corner_threshold_var,
+            self.autotrace_despeckle_level_var,
+            self.autotrace_despeckle_tightness_var,
+            self.autotrace_dpi_var,
+            self.autotrace_error_threshold_var,
+            self.autotrace_filter_iterations_var,
+            self.autotrace_line_reversion_threshold_var,
+            self.autotrace_line_threshold_var,
+            self.autotrace_noise_removal_var,
+            self.autotrace_preserve_width_var,
+            self.autotrace_remove_adjacent_corners_var,
+            self.autotrace_tangent_surround_var,
+            self.autotrace_width_weight_factor_var,
+            self.autotrace_report_progress_var,
+            self.autotrace_debug_bitmap_var,
+            self.vpype_linemerge_tolerance_var,
+            self.forkclean_max_search_length_var,
+            self.forkclean_min_short_length_var,
+            self.forkclean_angle_threshold_var,
+            self.forkclean_node_tolerance_var,
+            self.forkclean_passes_var,
+            self.vpype_linesimplify_tolerance_var,
         ):
             var.trace_add("write", lambda *_args: self.save_stroke_config_from_ui())
         self.rotate_trajectory_180_var = tk.BooleanVar(value=self.state.rotate_trajectory_180)
@@ -1670,28 +1901,80 @@ class WritingMachineApp:
             image = load_rgba(path)
             self.push_undo_state()
             self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
-            self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
+            self.state.stroke.trace_debug_artifacts = bool(self.trace_debug_artifacts_var.get())
             self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
-            self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             self.state.stroke.mask_erosion_iterations = int(self.mask_erosion_iterations_var.get())
             self.state.stroke.mask_morphology_order = mask_morphology_order_value(
                 str(self.mask_morphology_order_var.get())
             )
-            self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             self.state.stroke.min_component_area = int(self.min_component_area_var.get())
-            self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
+            self.state.stroke.autotrace_centerline = bool(self.autotrace_centerline_var.get())
+            self.state.stroke.autotrace_background_color = self.autotrace_background_color_var.get().strip()
+            self.state.stroke.autotrace_color_count = int(self.autotrace_color_count_var.get())
+            self.state.stroke.autotrace_corner_always_threshold = float(self.autotrace_corner_always_threshold_var.get())
+            self.state.stroke.autotrace_corner_surround = int(self.autotrace_corner_surround_var.get())
+            self.state.stroke.autotrace_corner_threshold = float(self.autotrace_corner_threshold_var.get())
+            self.state.stroke.autotrace_despeckle_level = int(self.autotrace_despeckle_level_var.get())
+            self.state.stroke.autotrace_despeckle_tightness = float(self.autotrace_despeckle_tightness_var.get())
+            self.state.stroke.autotrace_dpi = int(self.autotrace_dpi_var.get())
+            self.state.stroke.autotrace_error_threshold = float(self.autotrace_error_threshold_var.get())
+            self.state.stroke.autotrace_filter_iterations = int(self.autotrace_filter_iterations_var.get())
+            self.state.stroke.autotrace_line_reversion_threshold = float(
+                self.autotrace_line_reversion_threshold_var.get()
+            )
+            self.state.stroke.autotrace_line_threshold = float(self.autotrace_line_threshold_var.get())
+            self.state.stroke.autotrace_noise_removal = float(self.autotrace_noise_removal_var.get())
+            self.state.stroke.autotrace_preserve_width = bool(self.autotrace_preserve_width_var.get())
+            self.state.stroke.autotrace_remove_adjacent_corners = bool(
+                self.autotrace_remove_adjacent_corners_var.get()
+            )
+            self.state.stroke.autotrace_tangent_surround = int(self.autotrace_tangent_surround_var.get())
+            self.state.stroke.autotrace_width_weight_factor = float(self.autotrace_width_weight_factor_var.get())
+            self.state.stroke.autotrace_report_progress = bool(self.autotrace_report_progress_var.get())
+            self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
+            self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
+            self.state.stroke.forkclean_min_short_length_px = float(self.forkclean_min_short_length_var.get())
+            self.state.stroke.forkclean_angle_threshold_deg = float(self.forkclean_angle_threshold_var.get())
+            self.state.stroke.forkclean_node_tolerance_px = float(self.forkclean_node_tolerance_var.get())
+            self.state.stroke.forkclean_passes = int(self.forkclean_passes_var.get())
+            self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
             self.strokes = generate_strokes(
                 image,
-                simplify_epsilon=self.state.stroke.simplify_epsilon,
                 alpha_threshold=self.state.stroke.alpha_threshold,
-                min_points=self.state.stroke.min_points,
                 mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
                 mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
                 mask_morphology_order=self.state.stroke.mask_morphology_order,
                 min_component_area=self.state.stroke.min_component_area,
-                min_stroke_length_px=self.state.stroke.min_stroke_length_px,
-                svg_sample_step_px=self.state.stroke.svg_sample_step_px,
+                trace_debug_artifacts=self.state.stroke.trace_debug_artifacts,
+                autotrace_centerline=self.state.stroke.autotrace_centerline,
+                autotrace_background_color=self.state.stroke.autotrace_background_color,
+                autotrace_color_count=self.state.stroke.autotrace_color_count,
+                autotrace_corner_always_threshold=self.state.stroke.autotrace_corner_always_threshold,
+                autotrace_corner_surround=self.state.stroke.autotrace_corner_surround,
+                autotrace_corner_threshold=self.state.stroke.autotrace_corner_threshold,
+                autotrace_despeckle_level=self.state.stroke.autotrace_despeckle_level,
+                autotrace_despeckle_tightness=self.state.stroke.autotrace_despeckle_tightness,
+                autotrace_dpi=self.state.stroke.autotrace_dpi,
+                autotrace_error_threshold=self.state.stroke.autotrace_error_threshold,
+                autotrace_filter_iterations=self.state.stroke.autotrace_filter_iterations,
+                autotrace_line_reversion_threshold=self.state.stroke.autotrace_line_reversion_threshold,
+                autotrace_line_threshold=self.state.stroke.autotrace_line_threshold,
+                autotrace_noise_removal=self.state.stroke.autotrace_noise_removal,
+                autotrace_preserve_width=self.state.stroke.autotrace_preserve_width,
+                autotrace_remove_adjacent_corners=self.state.stroke.autotrace_remove_adjacent_corners,
+                autotrace_tangent_surround=self.state.stroke.autotrace_tangent_surround,
+                autotrace_width_weight_factor=self.state.stroke.autotrace_width_weight_factor,
+                autotrace_report_progress=self.state.stroke.autotrace_report_progress,
+                autotrace_debug_bitmap=self.state.stroke.autotrace_debug_bitmap,
+                vpype_linemerge_tolerance_px=self.state.stroke.vpype_linemerge_tolerance_px,
+                forkclean_max_search_length_px=self.state.stroke.forkclean_max_search_length_px,
+                forkclean_min_short_length_px=self.state.stroke.forkclean_min_short_length_px,
+                forkclean_angle_threshold_deg=self.state.stroke.forkclean_angle_threshold_deg,
+                forkclean_node_tolerance_px=self.state.stroke.forkclean_node_tolerance_px,
+                forkclean_passes=self.state.stroke.forkclean_passes,
+                vpype_linesimplify_tolerance_px=self.state.stroke.vpype_linesimplify_tolerance_px,
                 work_dir=self.artifacts,
                 progress_callback=self.append_stroke_progress,
             )
@@ -2011,12 +2294,10 @@ class WritingMachineApp:
                 self.serial_proxy_config_from_ui()
             if hasattr(self, "rotate_trajectory_180_var"):
                 self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
-            if hasattr(self, "epsilon_var"):
-                self.state.stroke.simplify_epsilon = float(self.epsilon_var.get())
+            if hasattr(self, "trace_debug_artifacts_var"):
+                self.state.stroke.trace_debug_artifacts = bool(self.trace_debug_artifacts_var.get())
             if hasattr(self, "stroke_alpha_threshold_var"):
                 self.state.stroke.alpha_threshold = int(self.stroke_alpha_threshold_var.get())
-            if hasattr(self, "stroke_min_points_var"):
-                self.state.stroke.min_points = int(self.stroke_min_points_var.get())
             if hasattr(self, "mask_dilation_iterations_var"):
                 self.state.stroke.mask_dilation_iterations = int(self.mask_dilation_iterations_var.get())
             if hasattr(self, "mask_erosion_iterations_var"):
@@ -2025,12 +2306,68 @@ class WritingMachineApp:
                 self.state.stroke.mask_morphology_order = mask_morphology_order_value(
                     str(self.mask_morphology_order_var.get())
                 )
-            if hasattr(self, "svg_sample_step_var"):
-                self.state.stroke.svg_sample_step_px = float(self.svg_sample_step_var.get())
             if hasattr(self, "min_component_area_var"):
                 self.state.stroke.min_component_area = int(self.min_component_area_var.get())
-            if hasattr(self, "min_stroke_length_var"):
-                self.state.stroke.min_stroke_length_px = float(self.min_stroke_length_var.get())
+            if hasattr(self, "autotrace_centerline_var"):
+                self.state.stroke.autotrace_centerline = bool(self.autotrace_centerline_var.get())
+            if hasattr(self, "autotrace_background_color_var"):
+                self.state.stroke.autotrace_background_color = self.autotrace_background_color_var.get().strip()
+            if hasattr(self, "autotrace_color_count_var"):
+                self.state.stroke.autotrace_color_count = int(self.autotrace_color_count_var.get())
+            if hasattr(self, "autotrace_corner_always_threshold_var"):
+                self.state.stroke.autotrace_corner_always_threshold = float(
+                    self.autotrace_corner_always_threshold_var.get()
+                )
+            if hasattr(self, "autotrace_corner_surround_var"):
+                self.state.stroke.autotrace_corner_surround = int(self.autotrace_corner_surround_var.get())
+            if hasattr(self, "autotrace_corner_threshold_var"):
+                self.state.stroke.autotrace_corner_threshold = float(self.autotrace_corner_threshold_var.get())
+            if hasattr(self, "autotrace_despeckle_level_var"):
+                self.state.stroke.autotrace_despeckle_level = int(self.autotrace_despeckle_level_var.get())
+            if hasattr(self, "autotrace_despeckle_tightness_var"):
+                self.state.stroke.autotrace_despeckle_tightness = float(self.autotrace_despeckle_tightness_var.get())
+            if hasattr(self, "autotrace_dpi_var"):
+                self.state.stroke.autotrace_dpi = int(self.autotrace_dpi_var.get())
+            if hasattr(self, "autotrace_error_threshold_var"):
+                self.state.stroke.autotrace_error_threshold = float(self.autotrace_error_threshold_var.get())
+            if hasattr(self, "autotrace_filter_iterations_var"):
+                self.state.stroke.autotrace_filter_iterations = int(self.autotrace_filter_iterations_var.get())
+            if hasattr(self, "autotrace_line_reversion_threshold_var"):
+                self.state.stroke.autotrace_line_reversion_threshold = float(
+                    self.autotrace_line_reversion_threshold_var.get()
+                )
+            if hasattr(self, "autotrace_line_threshold_var"):
+                self.state.stroke.autotrace_line_threshold = float(self.autotrace_line_threshold_var.get())
+            if hasattr(self, "autotrace_noise_removal_var"):
+                self.state.stroke.autotrace_noise_removal = float(self.autotrace_noise_removal_var.get())
+            if hasattr(self, "autotrace_preserve_width_var"):
+                self.state.stroke.autotrace_preserve_width = bool(self.autotrace_preserve_width_var.get())
+            if hasattr(self, "autotrace_remove_adjacent_corners_var"):
+                self.state.stroke.autotrace_remove_adjacent_corners = bool(
+                    self.autotrace_remove_adjacent_corners_var.get()
+                )
+            if hasattr(self, "autotrace_tangent_surround_var"):
+                self.state.stroke.autotrace_tangent_surround = int(self.autotrace_tangent_surround_var.get())
+            if hasattr(self, "autotrace_width_weight_factor_var"):
+                self.state.stroke.autotrace_width_weight_factor = float(self.autotrace_width_weight_factor_var.get())
+            if hasattr(self, "autotrace_report_progress_var"):
+                self.state.stroke.autotrace_report_progress = bool(self.autotrace_report_progress_var.get())
+            if hasattr(self, "autotrace_debug_bitmap_var"):
+                self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
+            if hasattr(self, "vpype_linemerge_tolerance_var"):
+                self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            if hasattr(self, "forkclean_max_search_length_var"):
+                self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
+            if hasattr(self, "forkclean_min_short_length_var"):
+                self.state.stroke.forkclean_min_short_length_px = float(self.forkclean_min_short_length_var.get())
+            if hasattr(self, "forkclean_angle_threshold_var"):
+                self.state.stroke.forkclean_angle_threshold_deg = float(self.forkclean_angle_threshold_var.get())
+            if hasattr(self, "forkclean_node_tolerance_var"):
+                self.state.stroke.forkclean_node_tolerance_px = float(self.forkclean_node_tolerance_var.get())
+            if hasattr(self, "forkclean_passes_var"):
+                self.state.stroke.forkclean_passes = int(self.forkclean_passes_var.get())
+            if hasattr(self, "vpype_linesimplify_tolerance_var"):
+                self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
             if hasattr(self, "eraser_radius_var"):
                 self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
             if hasattr(self, "text_line_width_var"):

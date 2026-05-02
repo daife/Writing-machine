@@ -69,6 +69,17 @@ class MachineConfigMigrationTests(unittest.TestCase):
             mask_dilation_iterations=1,
             mask_erosion_iterations=2,
             mask_morphology_order="erode_then_dilate",
+            vpype_linemerge_tolerance_px=1.5,
+            forkclean_max_search_length_px=25,
+            forkclean_min_short_length_px=4,
+            forkclean_angle_threshold_deg=100,
+            forkclean_node_tolerance_px=0.75,
+            forkclean_passes=2,
+            vpype_linesimplify_tolerance_px=0.4,
+            trace_debug_artifacts=True,
+            autotrace_background_color="FFFFFF",
+            autotrace_error_threshold=1.5,
+            autotrace_filter_iterations=0,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,13 +89,28 @@ class MachineConfigMigrationTests(unittest.TestCase):
 
             legacy_path = Path(tmp) / "legacy_project.json"
             legacy_path.write_text(
-                '{"stroke": {"mask_dilation_iterations": 1, "mask_erosion_iterations": 2}}',
+                '{"stroke": {"mask_dilation_iterations": 1, "mask_erosion_iterations": 2, '
+                '"svg_sample_step_px": 4, "min_stroke_length_px": 8, "min_points": 3, '
+                '"simplify_epsilon": 1.2}}',
                 encoding="utf-8",
             )
             legacy_loaded = ProjectState.load(legacy_path)
 
         self.assertEqual(loaded.stroke.mask_morphology_order, "erode_then_dilate")
+        self.assertEqual(loaded.stroke.vpype_linemerge_tolerance_px, 1.5)
+        self.assertEqual(loaded.stroke.forkclean_max_search_length_px, 25)
+        self.assertEqual(loaded.stroke.forkclean_min_short_length_px, 4)
+        self.assertEqual(loaded.stroke.forkclean_angle_threshold_deg, 100)
+        self.assertEqual(loaded.stroke.forkclean_node_tolerance_px, 0.75)
+        self.assertEqual(loaded.stroke.forkclean_passes, 2)
+        self.assertEqual(loaded.stroke.vpype_linesimplify_tolerance_px, 0.4)
+        self.assertTrue(loaded.stroke.trace_debug_artifacts)
+        self.assertEqual(loaded.stroke.autotrace_background_color, "FFFFFF")
+        self.assertEqual(loaded.stroke.autotrace_error_threshold, 1.5)
+        self.assertEqual(loaded.stroke.autotrace_filter_iterations, 0)
         self.assertEqual(legacy_loaded.stroke.mask_morphology_order, "dilate_then_erode")
+        self.assertEqual(legacy_loaded.stroke.vpype_linemerge_tolerance_px, 1.0)
+        self.assertEqual(legacy_loaded.stroke.forkclean_min_short_length_px, 3.0)
 
 
 if __name__ == "__main__":

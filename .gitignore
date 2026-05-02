@@ -28,6 +28,8 @@ execution_log.txt
 third_party/*
 !third_party/autotrace-runtime/
 !third_party/autotrace-runtime/**
+!third_party/vpype_forkclean_plugin_v2/
+!third_party/vpype_forkclean_plugin_v2/**
 
 # Generated machine/job files
 *.gcode
