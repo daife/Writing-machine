@@ -1373,6 +1373,13 @@ class WritingMachineApp:
         except Exception as exc:
             messagebox.showerror("加载失败", str(exc))
 
+    def initial_import_scale(self, image: Image.Image, ref: ReferenceCanvas) -> float:
+        max_width = max(1.0, ref.width_px * 0.85)
+        max_height = max(1.0, ref.height_px * 0.85)
+        if image.width <= max_width and image.height <= max_height:
+            return 1.0
+        return max(0.05, min(max_width / max(1, image.width), max_height / max(1, image.height)))
+
     def add_answer_layer(self, path: str | None = None, preserve_transparency: bool = False) -> None:
         ref = self.require_reference()
         if ref is None:
@@ -1394,6 +1401,7 @@ class WritingMachineApp:
             filename = f"imported_layer_{time.strftime('%Y%m%d_%H%M%S')}_{stem}.png"
             source_path = save_png(processed, self.artifacts / filename)
             layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+            layer.scale = self.initial_import_scale(processed, ref)
             layer.already_extracted = True
             layer.min_area = min_area
         self.push_undo_state()
