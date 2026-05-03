@@ -407,6 +407,7 @@ class WritingMachineApp:
             "autotrace_report_progress_var",
             "autotrace_debug_bitmap_var",
             "vpype_linemerge_tolerance_var",
+            "forkclean_enabled_var",
             "forkclean_max_search_length_var",
             "forkclean_min_short_length_var",
             "forkclean_angle_threshold_var",
@@ -450,6 +451,7 @@ class WritingMachineApp:
             self.state.stroke.autotrace_report_progress = bool(self.autotrace_report_progress_var.get())
             self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
             self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            self.state.stroke.forkclean_enabled = bool(self.forkclean_enabled_var.get())
             self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
             self.state.stroke.forkclean_min_short_length_px = float(self.forkclean_min_short_length_var.get())
             self.state.stroke.forkclean_angle_threshold_deg = float(self.forkclean_angle_threshold_var.get())
@@ -545,6 +547,7 @@ class WritingMachineApp:
             self.autotrace_report_progress_var.set(self.state.stroke.autotrace_report_progress)
             self.autotrace_debug_bitmap_var.set(self.state.stroke.autotrace_debug_bitmap)
             self.vpype_linemerge_tolerance_var.set(self.state.stroke.vpype_linemerge_tolerance_px)
+            self.forkclean_enabled_var.set(self.state.stroke.forkclean_enabled)
             self.forkclean_max_search_length_var.set(self.state.stroke.forkclean_max_search_length_px)
             self.forkclean_min_short_length_var.set(self.state.stroke.forkclean_min_short_length_px)
             self.forkclean_angle_threshold_var.set(self.state.stroke.forkclean_angle_threshold_deg)
@@ -695,6 +698,7 @@ class WritingMachineApp:
         self.autotrace_report_progress_var = tk.BooleanVar(value=self.state.stroke.autotrace_report_progress)
         self.autotrace_debug_bitmap_var = tk.BooleanVar(value=self.state.stroke.autotrace_debug_bitmap)
         self.vpype_linemerge_tolerance_var = tk.DoubleVar(value=self.state.stroke.vpype_linemerge_tolerance_px)
+        self.forkclean_enabled_var = tk.BooleanVar(value=self.state.stroke.forkclean_enabled)
         self.forkclean_max_search_length_var = tk.DoubleVar(value=self.state.stroke.forkclean_max_search_length_px)
         self.forkclean_min_short_length_var = tk.DoubleVar(value=self.state.stroke.forkclean_min_short_length_px)
         self.forkclean_angle_threshold_var = tk.DoubleVar(value=self.state.stroke.forkclean_angle_threshold_deg)
@@ -790,6 +794,11 @@ class WritingMachineApp:
             0.1,
             "传给 vpype linemerge -t。用于合并距离足够近的线段端点；过大会误合并相邻笔画。",
         )
+        add_param_check(
+            "执行 forkclean",
+            self.forkclean_enabled_var,
+            "开启后在 linesimplify 前执行 forkclean 清理分叉短枝；默认关闭，避免误删细小笔画。",
+        )
         add_param_spin(
             "forkclean 最大搜索(px)",
             self.forkclean_max_search_length_var,
@@ -866,6 +875,7 @@ class WritingMachineApp:
             self.autotrace_report_progress_var,
             self.autotrace_debug_bitmap_var,
             self.vpype_linemerge_tolerance_var,
+            self.forkclean_enabled_var,
             self.forkclean_max_search_length_var,
             self.forkclean_min_short_length_var,
             self.forkclean_angle_threshold_var,
@@ -2092,6 +2102,7 @@ class WritingMachineApp:
             self.state.stroke.autotrace_report_progress = bool(self.autotrace_report_progress_var.get())
             self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
             self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            self.state.stroke.forkclean_enabled = bool(self.forkclean_enabled_var.get())
             self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
             self.state.stroke.forkclean_min_short_length_px = float(self.forkclean_min_short_length_var.get())
             self.state.stroke.forkclean_angle_threshold_deg = float(self.forkclean_angle_threshold_var.get())
@@ -2134,6 +2145,7 @@ class WritingMachineApp:
                     autotrace_report_progress=self.state.stroke.autotrace_report_progress,
                     autotrace_debug_bitmap=self.state.stroke.autotrace_debug_bitmap,
                     vpype_linemerge_tolerance_px=self.state.stroke.vpype_linemerge_tolerance_px,
+                    forkclean_enabled=self.state.stroke.forkclean_enabled,
                     forkclean_max_search_length_px=self.state.stroke.forkclean_max_search_length_px,
                     forkclean_min_short_length_px=self.state.stroke.forkclean_min_short_length_px,
                     forkclean_angle_threshold_deg=self.state.stroke.forkclean_angle_threshold_deg,
@@ -2534,6 +2546,8 @@ class WritingMachineApp:
                 self.state.stroke.autotrace_debug_bitmap = bool(self.autotrace_debug_bitmap_var.get())
             if hasattr(self, "vpype_linemerge_tolerance_var"):
                 self.state.stroke.vpype_linemerge_tolerance_px = float(self.vpype_linemerge_tolerance_var.get())
+            if hasattr(self, "forkclean_enabled_var"):
+                self.state.stroke.forkclean_enabled = bool(self.forkclean_enabled_var.get())
             if hasattr(self, "forkclean_max_search_length_var"):
                 self.state.stroke.forkclean_max_search_length_px = float(self.forkclean_max_search_length_var.get())
             if hasattr(self, "forkclean_min_short_length_var"):

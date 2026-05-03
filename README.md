@@ -49,7 +49,7 @@ python -m venv .venv
    - 模块 4 生成后加入模块 2 的字迹图会作为已处理透明图层使用。
 
 3. 在 `3 轨迹生成` 中按图层把各自的 `source_path` 转换为轨迹，并保存 `artifacts/strokes.json`。
-   - 处理顺序是：逐图层读取 `source_path` -> Alpha 阈值 -> 膨胀/腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.bmp` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge forkclean linesimplify` 输出未排序图层 SVG -> 按图层裁切、缩放、旋转和平移参数合并为 `trace_merged_unsorted.svg` -> 对合并 SVG 执行 `linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
+   - 处理顺序是：逐图层读取 `source_path` -> Alpha 阈值 -> 膨胀/腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.bmp` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge` -> 可选 `forkclean` -> `linesimplify` 输出未排序图层 SVG -> 按图层裁切、缩放、旋转和平移参数合并为 `trace_merged_unsorted.svg` -> 对合并 SVG 执行 `linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
    - AutoTrace 调用格式参考官方 README。PowerShell 手动运行时，带空格的 exe 路径前要加 `&`：`& "C:\Program Files\AutoTrace\autotrace.exe" trace_input.bmp -centerline -output-file trace_raw.svg`。
    - 孤立点多时，优先把 `最小噪点面积(px)` 调到 `12~30`，把 `最短笔画长度(px)` 调到 `6~15`；如果标点、小短横被误删，再分别调低。曲线点太密时调大 `SVG 采样步长(px)`，细节丢失时调小。
    - 这些参数会保存到 `artifacts/project.json`，下次启动自动读取。

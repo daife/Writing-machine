@@ -462,6 +462,7 @@ def trace_image_to_svg(
     autotrace_report_progress: bool = False,
     autotrace_debug_bitmap: bool = False,
     vpype_linemerge_tolerance_px: float = 1.0,
+    forkclean_enabled: bool = False,
     forkclean_max_search_length_px: float = 24.0,
     forkclean_min_short_length_px: float = 3.0,
     forkclean_angle_threshold_deg: float = 110.0,
@@ -555,9 +556,12 @@ def trace_image_to_svg(
     if trace_debug_artifacts:
         debug_steps = [
             (raw_svg, "trace_linemerge.svg", ["linemerge", "-t", f"{max(0.0, float(vpype_linemerge_tolerance_px))}px"], "vpype linemerge"),
-            (work / "trace_linemerge.svg", "trace_forkclean.svg", forkclean_args, "vpype forkclean"),
-            (work / "trace_forkclean.svg", "trace_linesimplify.svg", linesimplify_args, "vpype linesimplify"),
         ]
+        current_svg = work / "trace_linemerge.svg"
+        if forkclean_enabled:
+            debug_steps.append((current_svg, "trace_forkclean.svg", forkclean_args, "vpype forkclean"))
+            current_svg = work / "trace_forkclean.svg"
+        debug_steps.append((current_svg, "trace_linesimplify.svg", linesimplify_args, "vpype linesimplify"))
         if sort_paths:
             debug_steps.append((work / "trace_linesimplify.svg", optimized_svg.name, linesort_args, "vpype linesort"))
         else:
@@ -572,7 +576,8 @@ def trace_image_to_svg(
                 finished_message=f"{label} 已生成 {output_name}",
             )
     else:
-        vpype_args = _command_prefix(vpype_command) + linemerge_args + forkclean_args + linesimplify_args + linesort_args + [
+        cleanup_args = forkclean_args if forkclean_enabled else []
+        vpype_args = _command_prefix(vpype_command) + linemerge_args + cleanup_args + linesimplify_args + linesort_args + [
             "write",
             str(optimized_svg),
         ]
@@ -580,7 +585,15 @@ def trace_image_to_svg(
             vpype_args,
             work,
             progress_callback=progress_callback,
-            running_message="使用 vpype 合并、清理、简化并排序 SVG 路径" if sort_paths else "使用 vpype 合并、清理并简化 SVG 路径",
+            running_message=(
+                "使用 vpype 合并、forkclean 清理、简化并排序 SVG 路径"
+                if sort_paths and forkclean_enabled
+                else "使用 vpype 合并、简化并排序 SVG 路径"
+                if sort_paths
+                else "使用 vpype 合并、forkclean 清理并简化 SVG 路径"
+                if forkclean_enabled
+                else "使用 vpype 合并并简化 SVG 路径"
+            ),
             finished_message="vpype 已生成 trace_optimized.svg",
         )
     if not optimized_svg.exists():
@@ -617,6 +630,7 @@ def generate_strokes(
     autotrace_report_progress: bool = False,
     autotrace_debug_bitmap: bool = False,
     vpype_linemerge_tolerance_px: float = 1.0,
+    forkclean_enabled: bool = False,
     forkclean_max_search_length_px: float = 24.0,
     forkclean_min_short_length_px: float = 3.0,
     forkclean_angle_threshold_deg: float = 110.0,
@@ -661,6 +675,7 @@ def generate_strokes(
                 autotrace_report_progress=autotrace_report_progress,
                 autotrace_debug_bitmap=autotrace_debug_bitmap,
                 vpype_linemerge_tolerance_px=vpype_linemerge_tolerance_px,
+                forkclean_enabled=forkclean_enabled,
                 forkclean_max_search_length_px=forkclean_max_search_length_px,
                 forkclean_min_short_length_px=forkclean_min_short_length_px,
                 forkclean_angle_threshold_deg=forkclean_angle_threshold_deg,
@@ -704,6 +719,7 @@ def generate_strokes(
         autotrace_report_progress=autotrace_report_progress,
         autotrace_debug_bitmap=autotrace_debug_bitmap,
         vpype_linemerge_tolerance_px=vpype_linemerge_tolerance_px,
+        forkclean_enabled=forkclean_enabled,
         forkclean_max_search_length_px=forkclean_max_search_length_px,
         forkclean_min_short_length_px=forkclean_min_short_length_px,
         forkclean_angle_threshold_deg=forkclean_angle_threshold_deg,

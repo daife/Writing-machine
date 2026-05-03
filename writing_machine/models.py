@@ -93,6 +93,7 @@ class StrokeConfig:
     autotrace_report_progress: bool = False
     autotrace_debug_bitmap: bool = False
     vpype_linemerge_tolerance_px: float = 0.3
+    forkclean_enabled: bool = False
     forkclean_max_search_length_px: float = 30.0
     forkclean_min_short_length_px: float = 5.0
     forkclean_angle_threshold_deg: float = 90.0
