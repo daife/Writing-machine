@@ -124,7 +124,7 @@ class ProjectState:
     text_render: TextRenderConfig = field(default_factory=TextRenderConfig)
     rotate_trajectory_180: bool = False
     eraser_radius: int = 18
-    answer_import_threshold: int = 125
+    answer_import_threshold: int = 185
     answer_import_min_area: int = 5
 
     def save(self, path: str | Path) -> None:
