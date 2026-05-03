@@ -557,6 +557,10 @@ class WritingMachineApp:
             self.text_line_spacing_var.set(self.state.text_render.line_spacing)
             self.text_min_area_var.set(self.state.text_render.min_area)
             self.font_path_var.set(self.state.text_render.font_path or default_font_path())
+            self.perturb_x_sigma_var.set(self.state.text_render.perturb_x_sigma)
+            self.perturb_y_sigma_var.set(self.state.text_render.perturb_y_sigma)
+            self.perturb_theta_sigma_var.set(self.state.text_render.perturb_theta_sigma)
+            self.seed_var.set(self.state.text_render.seed)
         self.refresh_layer_list()
         if self.state.layers:
             index = min(max(selected_index or 0, 0), len(self.state.layers) - 1)
@@ -906,6 +910,10 @@ class WritingMachineApp:
         self.text_line_spacing_var = tk.IntVar(value=self.state.text_render.line_spacing)
         self.text_min_area_var = tk.IntVar(value=self.state.text_render.min_area)
         self.font_path_var = tk.StringVar(value=self.state.text_render.font_path or default_font_path())
+        self.perturb_x_sigma_var = tk.DoubleVar(value=self.state.text_render.perturb_x_sigma)
+        self.perturb_y_sigma_var = tk.DoubleVar(value=self.state.text_render.perturb_y_sigma)
+        self.perturb_theta_sigma_var = tk.DoubleVar(value=self.state.text_render.perturb_theta_sigma)
+        self.seed_var = tk.IntVar(value=self.state.text_render.seed)
         for var in (
             self.text_line_width_var,
             self.font_size_var,
@@ -913,6 +921,10 @@ class WritingMachineApp:
             self.text_line_spacing_var,
             self.text_min_area_var,
             self.font_path_var,
+            self.perturb_x_sigma_var,
+            self.perturb_y_sigma_var,
+            self.perturb_theta_sigma_var,
+            self.seed_var,
         ):
             var.trace_add("write", lambda *_args: self.on_text_render_config_change())
         text_entry_tips = {
@@ -921,6 +933,10 @@ class WritingMachineApp:
             "行距 px": "在点击“生成手写图片”时生效。控制相邻两行之间的额外距离，数值越大行越疏。",
             "行宽 px": "在点击“生成手写图片”时生效。控制自动换行的最大行宽，最终图片宽度会按该值和边距自动生成。",
             "最小连通域": "仅对模块4生成的字迹图生效，不与模块2的“最小连通域”共用。二值化白底透明后，会删除面积小于该值的黑色连通区域。",
+            "扰动 X (sigma)": "字符在水平方向上的随机偏移程度（标准差）。",
+            "扰动 Y (sigma)": "字符在垂直方向上的随机偏移程度（标准差）。",
+            "扰动 旋转 (sigma)": "字符旋转角度的随机偏移程度（弧度，标准差）。",
+            "随机种子": "随机数生成器的种子。固定种子可以保证每次生成的字迹抖动效果一致。",
         }
         for label, var in [
             ("字号", self.font_size_var),
@@ -928,6 +944,10 @@ class WritingMachineApp:
             ("行距 px", self.text_line_spacing_var),
             ("行宽 px", self.text_line_width_var),
             ("最小连通域", self.text_min_area_var),
+            ("扰动 X (sigma)", self.perturb_x_sigma_var),
+            ("扰动 Y (sigma)", self.perturb_y_sigma_var),
+            ("扰动 旋转 (sigma)", self.perturb_theta_sigma_var),
+            ("随机种子", self.seed_var),
         ]:
             label_widget = ttk.Label(options, text=label)
             label_widget.pack(anchor="w")
@@ -2091,6 +2111,10 @@ class WritingMachineApp:
             self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
             self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             self.state.text_render.font_path = self.font_path_var.get()
+            self.state.text_render.perturb_x_sigma = float(self.perturb_x_sigma_var.get())
+            self.state.text_render.perturb_y_sigma = float(self.perturb_y_sigma_var.get())
+            self.state.text_render.perturb_theta_sigma = float(self.perturb_theta_sigma_var.get())
+            self.state.text_render.seed = int(self.seed_var.get())
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
@@ -2107,6 +2131,11 @@ class WritingMachineApp:
             self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
             self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             self.state.text_render.font_path = self.font_path_var.get()
+            self.state.text_render.perturb_x_sigma = float(self.perturb_x_sigma_var.get())
+            self.state.text_render.perturb_y_sigma = float(self.perturb_y_sigma_var.get())
+            self.state.text_render.perturb_theta_sigma = float(self.perturb_theta_sigma_var.get())
+            self.state.text_render.seed = int(self.seed_var.get())
+
             filename = f"handright_output_{time.strftime('%Y%m%d_%H%M%S')}_{int(time.time() * 1000) % 1000:03d}.png"
             path = render_text(
                 text=text,
@@ -2117,6 +2146,10 @@ class WritingMachineApp:
                 line_spacing=self.state.text_render.line_spacing,
                 line_width=self.state.text_render.line_width,
                 min_area=self.state.text_render.min_area,
+                perturb_x_sigma=self.state.text_render.perturb_x_sigma,
+                perturb_y_sigma=self.state.text_render.perturb_y_sigma,
+                perturb_theta_sigma=self.state.text_render.perturb_theta_sigma,
+                seed=self.state.text_render.seed,
             )
             self.generated_text_path = path
             self.text_canvas.set_image(load_rgba(path))
@@ -2382,6 +2415,14 @@ class WritingMachineApp:
                 self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             if hasattr(self, "font_path_var"):
                 self.state.text_render.font_path = self.font_path_var.get()
+            if hasattr(self, "perturb_x_sigma_var"):
+                self.state.text_render.perturb_x_sigma = float(self.perturb_x_sigma_var.get())
+            if hasattr(self, "perturb_y_sigma_var"):
+                self.state.text_render.perturb_y_sigma = float(self.perturb_y_sigma_var.get())
+            if hasattr(self, "perturb_theta_sigma_var"):
+                self.state.text_render.perturb_theta_sigma = float(self.perturb_theta_sigma_var.get())
+            if hasattr(self, "seed_var"):
+                self.state.text_render.seed = int(self.seed_var.get())
             self.state.save(self.artifacts / "project.json")
         finally:
             self.root.destroy()

@@ -109,6 +109,10 @@ class TextRenderConfig:
     line_width: int = 860
     min_area: int = 5
     font_path: str = ""
+    perturb_x_sigma: float = 1.2
+    perturb_y_sigma: float = 1.2
+    perturb_theta_sigma: float = 0.035
+    seed: int = 42
 
 
 @dataclass
