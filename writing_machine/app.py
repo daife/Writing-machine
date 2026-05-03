@@ -293,6 +293,11 @@ class WritingMachineApp:
         threshold_tip = "仅在导入答案图片图层时生效。灰度值低于该阈值的像素会被视为黑色字迹；提高它会过滤更浅的黑灰区域。"
         self.add_tooltip(threshold_label, threshold_tip)
         self.add_tooltip(threshold_spin, threshold_tip)
+        ttk.Label(
+            left,
+            text="若为 AI 生成图片，建议先前往 https://bigjpg.com/ 使用 4x 和低降噪放大后再导入。",
+            wraplength=230,
+        ).pack(anchor="w", pady=(7, 0))
 
         self.layer_vars = {}
         self.layer_import_min_area_var = tk.IntVar(value=self.state.answer_import_min_area)
