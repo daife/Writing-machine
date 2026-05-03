@@ -20,7 +20,6 @@ except Exception:
 from .gcode import save_gcode, strokes_to_gcode
 from .handwriting import default_font_path, render_text
 from .image_ops import (
-    composite_layers,
     ensure_artifacts_dir,
     load_rgba,
     make_preview,
@@ -41,6 +40,9 @@ from .strokes import (
     generate_strokes,
     load_strokes,
     save_strokes,
+    save_strokes_svg,
+    sort_svg_paths,
+    svg_to_strokes,
 )
 
 
@@ -261,7 +263,6 @@ class WritingMachineApp:
 
         ttk.Button(left, text="导入答案图片图层", command=self.add_answer_layer).pack(fill="x", pady=3)
         ttk.Button(left, text="删除当前图层", command=self.delete_current_layer).pack(fill="x", pady=3)
-        ttk.Button(left, text="融合并导出透明字迹图", command=self.export_merged_handwriting).pack(fill="x", pady=12)
 
         self.layer_list = tk.Listbox(left, height=7, exportselection=False)
         self.layer_list.pack(fill="x", pady=4)
@@ -276,7 +277,7 @@ class WritingMachineApp:
                 "左键未选中图层：选择图层\n"
                 "右键按住图框内部：平移\n"
                 "左键按住图框内部：橡皮擦\n"
-                "左键按住顶部圆形标识：旋转\n"
+                "左键按住顶部圆形标识：旋转（尽量不要旋转，可能破坏图像结构）\n"
                 "左键按住右下蓝色方块：缩放\n"
                 "左键按住红色角点：裁切"
             ),
@@ -698,7 +699,7 @@ class WritingMachineApp:
         add_param_check(
             "Debug 中间 SVG",
             self.trace_debug_artifacts_var,
-            "打开后轨迹生成会额外输出 trace_linemerge.svg、trace_forkclean.svg、trace_linesimplify.svg 等中间态文件。",
+            "打开后轨迹生成会在每个图层的 trace_layers 子目录中额外输出 trace_linemerge.svg、trace_forkclean.svg、trace_linesimplify.svg 等中间态文件。",
         )
         add_param_check(
             "AutoTrace centerline",
@@ -711,7 +712,7 @@ class WritingMachineApp:
             0,
             255,
             1,
-            "在“从透明字迹图生成轨迹”时生效。融合字迹图中 alpha 大于该值的像素会被视为要写的字迹区域；提高它会忽略半透明边缘。",
+            "在按图层生成轨迹时生效。每个 source_path 图层中 alpha 大于该值的像素会被视为要写的字迹区域；提高它会忽略半透明边缘。",
         )
         add_param_spin(
             "轨迹膨胀次数",
@@ -882,7 +883,7 @@ class WritingMachineApp:
             "在轨迹预览、G-code 生成和执行时生效。用于纸张实际旋转180度、机器从对角原点书写的场景，会同步旋转预览并镜像输出坐标。",
         )
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
-        ttk.Button(left, text="从透明字迹图生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
+        ttk.Button(left, text="按图层生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
         ttk.Button(left, text="加载 自定义轨迹strokes.json", command=self.load_strokes_json).pack(fill="x", pady=3)
         ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         self.stroke_info_var = tk.StringVar(value="尚未生成轨迹")
@@ -1122,8 +1123,6 @@ class WritingMachineApp:
                     skipped += 1
             except Exception as exc:
                 self.log(f"缓存文件删除失败：{path}，{exc}")
-        if not (self.artifacts / "handwriting_merged.png").exists():
-            self.gcode_lines = []
         if "strokes.json" in deleted_names:
             self.strokes = []
             if hasattr(self, "stroke_info_var"):
@@ -1866,66 +1865,185 @@ class WritingMachineApp:
             tags=tag,
         )
 
+    def current_layer_source_image(self, layer: AnswerLayer) -> tuple[Image.Image, tuple[int, int, int, int]]:
+        image = load_rgba(layer.source_path)
+        width, height = image.size
+        left = max(0, min(width - 1, layer.crop_left))
+        top = max(0, min(height - 1, layer.crop_top))
+        right_crop = max(0, min(width - left - 1, layer.crop_right))
+        bottom_crop = max(0, min(height - top - 1, layer.crop_bottom))
+        crop_box = (left, top, width - right_crop, height - bottom_crop)
+        return image.crop(crop_box), crop_box
+
+    def transformed_layer_offset(
+        self,
+        layer: AnswerLayer,
+        source_size: tuple[int, int],
+        bbox: tuple[int, int, int, int],
+    ) -> tuple[float, float]:
+        width, height = source_size
+        scale = max(0.001, float(layer.scale))
+        scaled_width = width * scale
+        scaled_height = height * scale
+        angle = math.radians(-float(layer.rotation_deg))
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        center = (scaled_width / 2.0, scaled_height / 2.0)
+
+        def rotate_scaled(x: float, y: float) -> tuple[float, float]:
+            sx = x * scale
+            sy = y * scale
+            dx = sx - center[0]
+            dy = sy - center[1]
+            return (
+                center[0] + dx * cos_a - dy * sin_a,
+                center[1] + dx * sin_a + dy * cos_a,
+            )
+
+        image_corners = [
+            rotate_scaled(0, 0),
+            rotate_scaled(width, 0),
+            rotate_scaled(width, height),
+            rotate_scaled(0, height),
+        ]
+        min_image_x = min(x for x, _y in image_corners)
+        min_image_y = min(y for _x, y in image_corners)
+        left, top, right, bottom = bbox
+        bbox_corners = [
+            rotate_scaled(left, top),
+            rotate_scaled(right, top),
+            rotate_scaled(right, bottom),
+            rotate_scaled(left, bottom),
+        ]
+        return (
+            min(x for x, _y in bbox_corners) - min_image_x,
+            min(y for _x, y in bbox_corners) - min_image_y,
+        )
+
+    def reference_point_to_layer_source(
+        self,
+        layer: AnswerLayer,
+        point: tuple[float, float],
+        source_size: tuple[int, int],
+    ) -> tuple[float, float]:
+        width, height = source_size
+        scale = max(0.001, float(layer.scale))
+        scaled_width = width * scale
+        scaled_height = height * scale
+        angle = math.radians(-float(layer.rotation_deg))
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        center = (scaled_width / 2.0, scaled_height / 2.0)
+
+        def rotate_scaled(x: float, y: float) -> tuple[float, float]:
+            dx = x - center[0]
+            dy = y - center[1]
+            return (
+                center[0] + dx * cos_a - dy * sin_a,
+                center[1] + dx * sin_a + dy * cos_a,
+            )
+
+        image_corners = [
+            rotate_scaled(0, 0),
+            rotate_scaled(scaled_width, 0),
+            rotate_scaled(scaled_width, scaled_height),
+            rotate_scaled(0, scaled_height),
+        ]
+        min_image_x = min(x for x, _y in image_corners)
+        min_image_y = min(y for _x, y in image_corners)
+        sx = point[0] - float(layer.x) + min_image_x
+        sy = point[1] - float(layer.y) + min_image_y
+        dx = sx - center[0]
+        dy = sy - center[1]
+        unrotated_x = center[0] + dx * cos_a + dy * sin_a
+        unrotated_y = center[1] - dx * sin_a + dy * cos_a
+        return (unrotated_x / scale, unrotated_y / scale)
+
     def commit_layer_erase(self) -> None:
-        ref = self.state.reference
         layer = self.current_layer()
         index = self.current_layer_index()
-        if ref is None or layer is None or index is None or not self._erase_points:
+        if layer is None or index is None or not self._erase_points:
             return
-        full = Image.new("RGBA", (ref.width_px, ref.height_px), (0, 0, 0, 0))
-        rendered = render_layer(layer)
-        full.alpha_composite(rendered, (int(round(layer.x)), int(round(layer.y))))
-        alpha = full.getchannel("A")
+        source, _crop_box = self.current_layer_source_image(layer)
+        alpha = source.getchannel("A")
         draw = ImageDraw.Draw(alpha)
-        radius = max(1, int(self.eraser_radius_var.get()))
-        for x, y in self._erase_points:
+        radius = max(1.0, float(self.eraser_radius_var.get()) / max(0.001, float(layer.scale)))
+        for point in self._erase_points:
+            x, y = self.reference_point_to_layer_source(layer, point, source.size)
             draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=0)
-        full.putalpha(alpha)
+        source.putalpha(alpha)
         bbox = alpha.getbbox()
         if bbox:
-            full = full.crop(bbox)
-            new_x, new_y = bbox[0], bbox[1]
+            offset_x, offset_y = self.transformed_layer_offset(layer, source.size, bbox)
+            source = source.crop(bbox)
+            new_x = float(layer.x) + offset_x
+            new_y = float(layer.y) + offset_y
         else:
-            full = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+            source = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             new_x, new_y = layer.x, layer.y
         path = self.artifacts / f"erased_layer_{index + 1}.png"
-        full.save(path)
+        source.save(path)
         layer.source_path = str(path)
         layer.x = float(new_x)
         layer.y = float(new_y)
-        layer.scale = 1.0
-        layer.rotation_deg = 0.0
         layer.crop_left = layer.crop_top = layer.crop_right = layer.crop_bottom = 0
         layer.already_extracted = True
         self.sync_layer_controls(layer)
 
-    def export_merged_handwriting(self) -> None:
-        ref = self.require_reference()
-        if ref is None:
-            return
-        try:
-            image = composite_layers(ref, self.state.layers)
-            path = save_png(image, self.artifacts / "handwriting_merged.png")
-            messagebox.showinfo("完成", f"透明字迹图已保存：{path}")
-        except Exception as exc:
-            messagebox.showerror("融合失败", str(exc))
+    def transform_layer_strokes(
+        self,
+        layer: AnswerLayer,
+        strokes: list[Stroke],
+        source_size: tuple[int, int],
+    ) -> list[Stroke]:
+        width, height = source_size
+        scale = max(0.001, float(layer.scale))
+        scaled_width = width * scale
+        scaled_height = height * scale
+        angle = math.radians(-float(layer.rotation_deg))
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        center = (scaled_width / 2.0, scaled_height / 2.0)
+
+        def rotate_scaled(x: float, y: float) -> tuple[float, float]:
+            sx = x * scale
+            sy = y * scale
+            dx = sx - center[0]
+            dy = sy - center[1]
+            return (
+                center[0] + dx * cos_a - dy * sin_a,
+                center[1] + dx * sin_a + dy * cos_a,
+            )
+
+        image_corners = [
+            rotate_scaled(0, 0),
+            rotate_scaled(width, 0),
+            rotate_scaled(width, height),
+            rotate_scaled(0, height),
+        ]
+        min_image_x = min(x for x, _y in image_corners)
+        min_image_y = min(y for _x, y in image_corners)
+
+        transformed: list[Stroke] = []
+        for stroke in strokes:
+            points = []
+            for x, y in stroke.points:
+                rx, ry = rotate_scaled(x, y)
+                points.append((float(layer.x) + rx - min_image_x, float(layer.y) + ry - min_image_y))
+            transformed.append(Stroke(points=points, closed=stroke.closed))
+        return transformed
 
     def generate_stroke_paths(self) -> None:
         ref = self.require_reference()
         if ref is None:
             return
         self.clear_stroke_progress()
-        self.append_stroke_progress("开始从透明字迹图生成轨迹。")
-        path = self.artifacts / "handwriting_merged.png"
-        if not path.exists():
-            self.append_stroke_progress("未找到 handwriting_merged.png，先导出透明字迹图。")
-            self.export_merged_handwriting()
-        if not path.exists():
-            self.append_stroke_progress("透明字迹图不存在，轨迹生成已停止。")
+        enabled_layers = [layer for layer in self.state.layers if layer.enabled]
+        self.append_stroke_progress("开始按图层从 source_path 生成轨迹。")
+        if not enabled_layers:
+            self.append_stroke_progress("没有启用的答案图层，轨迹生成已停止。")
             return
         try:
-            self.append_stroke_progress(f"正在读取透明字迹图：{path}")
-            image = load_rgba(path)
             self.push_undo_state()
             self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
             self.state.stroke.trace_debug_artifacts = bool(self.trace_debug_artifacts_var.get())
@@ -1967,44 +2085,68 @@ class WritingMachineApp:
             self.state.stroke.forkclean_node_tolerance_px = float(self.forkclean_node_tolerance_var.get())
             self.state.stroke.forkclean_passes = int(self.forkclean_passes_var.get())
             self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
-            self.strokes = generate_strokes(
-                image,
-                alpha_threshold=self.state.stroke.alpha_threshold,
-                mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
-                mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
-                mask_morphology_order=self.state.stroke.mask_morphology_order,
-                min_component_area=self.state.stroke.min_component_area,
-                trace_debug_artifacts=self.state.stroke.trace_debug_artifacts,
-                autotrace_centerline=self.state.stroke.autotrace_centerline,
-                autotrace_background_color=self.state.stroke.autotrace_background_color,
-                autotrace_color_count=self.state.stroke.autotrace_color_count,
-                autotrace_corner_always_threshold=self.state.stroke.autotrace_corner_always_threshold,
-                autotrace_corner_surround=self.state.stroke.autotrace_corner_surround,
-                autotrace_corner_threshold=self.state.stroke.autotrace_corner_threshold,
-                autotrace_despeckle_level=self.state.stroke.autotrace_despeckle_level,
-                autotrace_despeckle_tightness=self.state.stroke.autotrace_despeckle_tightness,
-                autotrace_dpi=self.state.stroke.autotrace_dpi,
-                autotrace_error_threshold=self.state.stroke.autotrace_error_threshold,
-                autotrace_filter_iterations=self.state.stroke.autotrace_filter_iterations,
-                autotrace_line_reversion_threshold=self.state.stroke.autotrace_line_reversion_threshold,
-                autotrace_line_threshold=self.state.stroke.autotrace_line_threshold,
-                autotrace_noise_removal=self.state.stroke.autotrace_noise_removal,
-                autotrace_preserve_width=self.state.stroke.autotrace_preserve_width,
-                autotrace_remove_adjacent_corners=self.state.stroke.autotrace_remove_adjacent_corners,
-                autotrace_tangent_surround=self.state.stroke.autotrace_tangent_surround,
-                autotrace_width_weight_factor=self.state.stroke.autotrace_width_weight_factor,
-                autotrace_report_progress=self.state.stroke.autotrace_report_progress,
-                autotrace_debug_bitmap=self.state.stroke.autotrace_debug_bitmap,
-                vpype_linemerge_tolerance_px=self.state.stroke.vpype_linemerge_tolerance_px,
-                forkclean_max_search_length_px=self.state.stroke.forkclean_max_search_length_px,
-                forkclean_min_short_length_px=self.state.stroke.forkclean_min_short_length_px,
-                forkclean_angle_threshold_deg=self.state.stroke.forkclean_angle_threshold_deg,
-                forkclean_node_tolerance_px=self.state.stroke.forkclean_node_tolerance_px,
-                forkclean_passes=self.state.stroke.forkclean_passes,
-                vpype_linesimplify_tolerance_px=self.state.stroke.vpype_linesimplify_tolerance_px,
-                work_dir=self.artifacts,
-                progress_callback=self.append_stroke_progress,
-            )
+
+            merged_strokes: list[Stroke] = []
+            trace_layers_dir = self.artifacts / "trace_layers"
+            trace_layers_dir.mkdir(parents=True, exist_ok=True)
+            for layer_index, layer in enumerate(enabled_layers, start=1):
+                image, _crop_box = self.current_layer_source_image(layer)
+                self.append_stroke_progress(f"图层 {layer_index}：正在读取 source_path：{layer.source_path}")
+                layer_strokes = generate_strokes(
+                    image,
+                    alpha_threshold=self.state.stroke.alpha_threshold,
+                    mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
+                    mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
+                    mask_morphology_order=self.state.stroke.mask_morphology_order,
+                    min_component_area=self.state.stroke.min_component_area,
+                    trace_debug_artifacts=self.state.stroke.trace_debug_artifacts,
+                    autotrace_centerline=self.state.stroke.autotrace_centerline,
+                    autotrace_background_color=self.state.stroke.autotrace_background_color,
+                    autotrace_color_count=self.state.stroke.autotrace_color_count,
+                    autotrace_corner_always_threshold=self.state.stroke.autotrace_corner_always_threshold,
+                    autotrace_corner_surround=self.state.stroke.autotrace_corner_surround,
+                    autotrace_corner_threshold=self.state.stroke.autotrace_corner_threshold,
+                    autotrace_despeckle_level=self.state.stroke.autotrace_despeckle_level,
+                    autotrace_despeckle_tightness=self.state.stroke.autotrace_despeckle_tightness,
+                    autotrace_dpi=self.state.stroke.autotrace_dpi,
+                    autotrace_error_threshold=self.state.stroke.autotrace_error_threshold,
+                    autotrace_filter_iterations=self.state.stroke.autotrace_filter_iterations,
+                    autotrace_line_reversion_threshold=self.state.stroke.autotrace_line_reversion_threshold,
+                    autotrace_line_threshold=self.state.stroke.autotrace_line_threshold,
+                    autotrace_noise_removal=self.state.stroke.autotrace_noise_removal,
+                    autotrace_preserve_width=self.state.stroke.autotrace_preserve_width,
+                    autotrace_remove_adjacent_corners=self.state.stroke.autotrace_remove_adjacent_corners,
+                    autotrace_tangent_surround=self.state.stroke.autotrace_tangent_surround,
+                    autotrace_width_weight_factor=self.state.stroke.autotrace_width_weight_factor,
+                    autotrace_report_progress=self.state.stroke.autotrace_report_progress,
+                    autotrace_debug_bitmap=self.state.stroke.autotrace_debug_bitmap,
+                    vpype_linemerge_tolerance_px=self.state.stroke.vpype_linemerge_tolerance_px,
+                    forkclean_max_search_length_px=self.state.stroke.forkclean_max_search_length_px,
+                    forkclean_min_short_length_px=self.state.stroke.forkclean_min_short_length_px,
+                    forkclean_angle_threshold_deg=self.state.stroke.forkclean_angle_threshold_deg,
+                    forkclean_node_tolerance_px=self.state.stroke.forkclean_node_tolerance_px,
+                    forkclean_passes=self.state.stroke.forkclean_passes,
+                    vpype_linesimplify_tolerance_px=self.state.stroke.vpype_linesimplify_tolerance_px,
+                    sort_paths=False,
+                    work_dir=trace_layers_dir / f"layer_{layer_index:03d}",
+                    progress_callback=lambda message, index=layer_index: self.append_stroke_progress(
+                        f"图层 {index}：{message}"
+                    ),
+                )
+                transformed = self.transform_layer_strokes(layer, layer_strokes, image.size)
+                merged_strokes.extend(transformed)
+                self.append_stroke_progress(f"图层 {layer_index}：已生成并变换 {len(transformed)} 条 stroke。")
+
+            if not merged_strokes:
+                self.append_stroke_progress("没有生成任何轨迹，流程已停止。")
+                return
+            merged_svg = self.artifacts / "trace_merged_unsorted.svg"
+            sorted_svg = self.artifacts / "trace_optimized.svg"
+            self.append_stroke_progress("正在合并所有图层 SVG，尚未 linesort...")
+            save_strokes_svg(merged_strokes, ref.width_px, ref.height_px, merged_svg)
+            sort_svg_paths(merged_svg, sorted_svg, progress_callback=self.append_stroke_progress)
+            self.append_stroke_progress("正在解析 linesort 后的 SVG 折线为轨迹点...")
+            self.strokes = svg_to_strokes(sorted_svg)
             self.append_stroke_progress("正在保存 strokes.json...")
             save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")
@@ -2022,23 +2164,9 @@ class WritingMachineApp:
         if ref is None:
             self.stroke_canvas.set_image(None)
             return
-        path = self.artifacts / "handwriting_merged.png"
-        if not path.exists():
-            if self.state.layers:
-                self.export_merged_handwriting()
-            else:
-                self.stroke_canvas.set_image(load_rgba(ref.image_path) if ref.image_path and Path(ref.image_path).exists() else None)
-                return
         try:
-            handwriting = load_rgba(path)
             self.state.rotate_trajectory_180 = bool(self.rotate_trajectory_180_var.get())
-            if ref.image_path and Path(ref.image_path).exists():
-                base = load_rgba(ref.image_path)
-            else:
-                base = Image.new("RGBA", (ref.width_px, ref.height_px), (255, 255, 255, 255))
-            overlay = Image.new("RGBA", base.size, (255, 255, 255, 80))
-            base = Image.alpha_composite(base, overlay)
-            preview = Image.alpha_composite(base, handwriting)
+            preview = make_preview(ref, self.state.layers)
             if self.state.rotate_trajectory_180:
                 preview = preview.rotate(180, expand=False)
                 draw = ImageDraw.Draw(preview)

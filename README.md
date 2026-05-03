@@ -35,21 +35,21 @@ python -m venv .venv
    - 可以用 `保存当前底图配置` / `加载底图配置` 管理 `artifacts/references/` 下的多个底图配置。
    - `清理缓存文件` 会删除未被当前项目引用的临时文件，但不会删除 `project.json`、底图配置、当前底图和当前图层图片。
 
-2. 在 `2 字迹定位` 中导入答案图片图层，并在底图上移动、缩放、旋转、裁切或擦除，然后导出 `artifacts/handwriting_merged.png`。
+2. 在 `2 字迹定位` 中导入答案图片图层，并在底图上移动、缩放、裁切或擦除；尽量不要旋转图层，因为旋转可能破坏图像结构。
    - 可以拖入一个或多个图片文件。
    - 可以用 `Ctrl+V` 或 `Win+V` 粘贴剪切板图片。
    - 点击画布中的图片可选择图层。
    - 右键拖动图框内部可平移图层。
    - 左键拖动图框内部可使用橡皮擦。
-   - 左键拖动顶部圆形标识可旋转。
+   - 左键拖动顶部圆形标识可旋转；不建议旋转，可能破坏图像结构。
    - 左键拖动右下蓝色方块可缩放，缩放锚点在左上角。
    - 左键拖动红色边框角点可裁切。
    - `二值化阈值` 用于导入时决定哪些灰黑像素会被视为字迹，数值越高，越浅的灰黑区域越容易被过滤掉。
    - 手动导入的答案图会在导入时先二值化、白底透明化、删除小于“导入去噪最小连通域”的噪点并裁掉透明边缘，再保存成新的透明 PNG 作为后续编辑基底；预览和导出时不会重复去噪。
    - 模块 4 生成后加入模块 2 的字迹图会作为已处理透明图层使用。
 
-3. 在 `3 轨迹生成` 中把透明字迹图转换为轨迹，并保存 `artifacts/strokes.json`。
-   - 处理顺序是：Alpha 阈值 -> 膨胀 -> 腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.bmp` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge linesimplify linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
+3. 在 `3 轨迹生成` 中按图层把各自的 `source_path` 转换为轨迹，并保存 `artifacts/strokes.json`。
+   - 处理顺序是：逐图层读取 `source_path` -> Alpha 阈值 -> 膨胀/腐蚀 -> 删除小连通域 -> 生成黑白 `trace_input.bmp` -> AutoTrace `-centerline` 输出 `trace_raw.svg` -> vpype `linemerge forkclean linesimplify` 输出未排序图层 SVG -> 按图层裁切、缩放、旋转和平移参数合并为 `trace_merged_unsorted.svg` -> 对合并 SVG 执行 `linesort` 输出 `trace_optimized.svg` -> 解析 SVG 保存 `strokes.json`。
    - AutoTrace 调用格式参考官方 README。PowerShell 手动运行时，带空格的 exe 路径前要加 `&`：`& "C:\Program Files\AutoTrace\autotrace.exe" trace_input.bmp -centerline -output-file trace_raw.svg`。
    - 孤立点多时，优先把 `最小噪点面积(px)` 调到 `12~30`，把 `最短笔画长度(px)` 调到 `6~15`；如果标点、小短横被误删，再分别调低。曲线点太密时调大 `SVG 采样步长(px)`，细节丢失时调小。
    - 这些参数会保存到 `artifacts/project.json`，下次启动自动读取。

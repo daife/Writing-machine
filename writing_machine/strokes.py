@@ -468,11 +468,12 @@ def trace_image_to_svg(
     forkclean_node_tolerance_px: float = 1.0,
     forkclean_passes: int = 1,
     vpype_linesimplify_tolerance_px: float = 0.3,
+    sort_paths: bool = True,
     autotrace_command: Command = "autotrace",
     vpype_command: Command = "vpype",
     progress_callback: ProgressCallback | None = None,
 ) -> Path | None:
-    work = Path(work_dir)
+    work = Path(work_dir).resolve()
     input_bitmap = work / "trace_input.bmp"
     raw_svg = work / "trace_raw.svg"
     optimized_svg = work / "trace_optimized.svg"
@@ -550,14 +551,17 @@ def trace_image_to_svg(
         "-t",
         f"{max(0.0, float(vpype_linesimplify_tolerance_px))}px",
     ]
-    linesort_args = ["linesort", "--two-opt"]
+    linesort_args = ["linesort", "--two-opt"] if sort_paths else []
     if trace_debug_artifacts:
         debug_steps = [
             (raw_svg, "trace_linemerge.svg", ["linemerge", "-t", f"{max(0.0, float(vpype_linemerge_tolerance_px))}px"], "vpype linemerge"),
             (work / "trace_linemerge.svg", "trace_forkclean.svg", forkclean_args, "vpype forkclean"),
             (work / "trace_forkclean.svg", "trace_linesimplify.svg", linesimplify_args, "vpype linesimplify"),
-            (work / "trace_linesimplify.svg", optimized_svg.name, linesort_args, "vpype linesort"),
         ]
+        if sort_paths:
+            debug_steps.append((work / "trace_linesimplify.svg", optimized_svg.name, linesort_args, "vpype linesort"))
+        else:
+            debug_steps.append((work / "trace_linesimplify.svg", optimized_svg.name, [], "vpype 输出未排序 SVG"))
         for source_svg, output_name, stage_args, label in debug_steps:
             output_svg = work / output_name
             _run_trace_command(
@@ -576,7 +580,7 @@ def trace_image_to_svg(
             vpype_args,
             work,
             progress_callback=progress_callback,
-            running_message="使用 vpype 合并、清理、简化并排序 SVG 路径",
+            running_message="使用 vpype 合并、清理、简化并排序 SVG 路径" if sort_paths else "使用 vpype 合并、清理并简化 SVG 路径",
             finished_message="vpype 已生成 trace_optimized.svg",
         )
     if not optimized_svg.exists():
@@ -619,6 +623,7 @@ def generate_strokes(
     forkclean_node_tolerance_px: float = 1.0,
     forkclean_passes: int = 1,
     vpype_linesimplify_tolerance_px: float = 0.3,
+    sort_paths: bool = True,
     work_dir: str | Path | None = None,
     autotrace_command: Command = "autotrace",
     vpype_command: Command = "vpype",
@@ -662,6 +667,7 @@ def generate_strokes(
                 forkclean_node_tolerance_px=forkclean_node_tolerance_px,
                 forkclean_passes=forkclean_passes,
                 vpype_linesimplify_tolerance_px=vpype_linesimplify_tolerance_px,
+                sort_paths=sort_paths,
                 work_dir=tmp,
                 autotrace_command=autotrace_command,
                 vpype_command=vpype_command,
@@ -704,6 +710,7 @@ def generate_strokes(
         forkclean_node_tolerance_px=forkclean_node_tolerance_px,
         forkclean_passes=forkclean_passes,
         vpype_linesimplify_tolerance_px=vpype_linesimplify_tolerance_px,
+        sort_paths=sort_paths,
         autotrace_command=autotrace_command,
         vpype_command=vpype_command,
         progress_callback=progress_callback,
@@ -715,6 +722,60 @@ def generate_strokes(
     points = sum(len(stroke.points) for stroke in strokes)
     _notify_progress(progress_callback, f"SVG 解析完成：{len(strokes)} 条 stroke，{points} 个点。")
     return strokes
+
+
+def _format_svg_number(value: float) -> str:
+    return f"{float(value):.3f}".rstrip("0").rstrip(".") or "0"
+
+
+def save_strokes_svg(strokes: list[Stroke], width_px: int, height_px: int, path: str | Path) -> str:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width_px}" height="{height_px}" viewBox="0 0 {width_px} {height_px}">',
+        '<g fill="none" stroke="#000000" stroke-width="1">',
+    ]
+    for stroke in strokes:
+        if not stroke.points:
+            continue
+        commands = [f"M {_format_svg_number(stroke.points[0][0])} {_format_svg_number(stroke.points[0][1])}"]
+        commands.extend(
+            f"L {_format_svg_number(x)} {_format_svg_number(y)}"
+            for x, y in stroke.points[1:]
+        )
+        if stroke.closed:
+            commands.append("Z")
+        parts.append(f'  <path d="{" ".join(commands)}"/>')
+    parts.extend(["</g>", "</svg>"])
+    target.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    return str(target)
+
+
+def sort_svg_paths(
+    input_svg: str | Path,
+    output_svg: str | Path,
+    vpype_command: Command = "vpype",
+    progress_callback: ProgressCallback | None = None,
+) -> str:
+    input_path = Path(input_svg).resolve()
+    output_path = Path(output_svg).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _run_trace_command(
+        _command_prefix(vpype_command)
+        + ["read", str(input_path), "linesort", "--two-opt", "write", str(output_path)],
+        output_path.parent,
+        progress_callback=progress_callback,
+        running_message="使用 vpype 对合并后的 SVG 执行 linesort",
+        finished_message=f"vpype 已生成 {output_path.name}",
+    )
+    if not output_path.exists():
+        raise TraceToolError(f"vpype 未生成排序后的 SVG：{output_path}")
+    return str(output_path)
+
+
+def svg_to_strokes(path: str | Path) -> list[Stroke]:
+    return _svg_to_strokes(Path(path))
 
 
 def save_strokes(strokes: list[Stroke], width_px: int, height_px: int, path: str | Path) -> str:
