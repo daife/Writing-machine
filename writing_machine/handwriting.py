@@ -5,8 +5,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .image_ops import extract_black_handwriting
-
 
 def default_font_path() -> str:
     candidates = [
@@ -29,7 +27,6 @@ def render_text(
     char_spacing: int = 2,
     line_spacing: int = 18,
     line_width: int = 860,
-    min_area: int = 1,
     left_margin: int = 20,
     top_margin: int = 20,
     perturb_x_sigma: float = 1.2,
@@ -93,5 +90,5 @@ def render_text(
             image.alpha_composite(char_image, (int(round(x + jitter_x)), int(round(y + jitter_y))))
             x += char_width + char_gap
         y += line_step
-    extract_black_handwriting(image, min_area=min_area).save(target)
+    image.save(target)
     return str(target)

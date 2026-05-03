@@ -107,7 +107,6 @@ class TextRenderConfig:
     char_spacing: int = 2
     line_spacing: int = 18
     line_width: int = 860
-    min_area: int = 5
     font_path: str = ""
     perturb_x_sigma: float = 1.2
     perturb_y_sigma: float = 1.2
@@ -126,6 +125,7 @@ class ProjectState:
     rotate_trajectory_180: bool = False
     eraser_radius: int = 18
     answer_import_threshold: int = 245
+    answer_import_min_area: int = 5
 
     def save(self, path: str | Path) -> None:
         target = Path(path)
@@ -162,4 +162,5 @@ class ProjectState:
         state.rotate_trajectory_180 = bool(data.get("rotate_trajectory_180", False))
         state.eraser_radius = int(data.get("eraser_radius", state.eraser_radius))
         state.answer_import_threshold = int(data.get("answer_import_threshold", state.answer_import_threshold))
+        state.answer_import_min_area = int(data.get("answer_import_min_area", state.answer_import_min_area))
         return state

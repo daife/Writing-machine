@@ -115,8 +115,8 @@ def binarize_black_on_transparent(image: Image.Image, threshold: int = 245) -> I
     return black
 
 
-def prepare_answer_layer_image(image: Image.Image, threshold: int = 245) -> Image.Image:
-    processed = binarize_black_on_transparent(image, threshold=threshold)
+def prepare_answer_layer_image(image: Image.Image, threshold: int = 245, min_area: int = 5) -> Image.Image:
+    processed = extract_black_handwriting(image, threshold=threshold, min_area=min_area)
     alpha_bbox = processed.getchannel("A").getbbox()
     if alpha_bbox is None:
         return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
@@ -131,8 +131,6 @@ def render_layer(layer: AnswerLayer) -> Image.Image:
     right_crop = max(0, min(width - left - 1, layer.crop_right))
     bottom_crop = max(0, min(height - top - 1, layer.crop_bottom))
     image = image.crop((left, top, width - right_crop, height - bottom_crop))
-    if not layer.already_extracted:
-        image = extract_black_handwriting(image, min_area=layer.min_area)
     if layer.scale != 1.0:
         new_size = (
             max(1, int(round(image.width * layer.scale))),

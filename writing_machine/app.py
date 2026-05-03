@@ -293,9 +293,17 @@ class WritingMachineApp:
         self.add_tooltip(threshold_label, threshold_tip)
         self.add_tooltip(threshold_spin, threshold_tip)
 
-        self.layer_vars = {
-            "min_area": tk.IntVar(value=5),
-        }
+        self.layer_vars = {}
+        self.layer_import_min_area_var = tk.IntVar(value=self.state.answer_import_min_area)
+        self.layer_import_min_area_var.trace_add("write", lambda *_args: self.save_layer_import_min_area_from_ui())
+        min_area_label = ttk.Label(left, text="导入去噪最小连通域")
+        min_area_label.pack(anchor="w", pady=(7, 0))
+        min_area_spin = ttk.Spinbox(left, from_=1, to=5000, increment=1, textvariable=self.layer_import_min_area_var)
+        min_area_spin.pack(fill="x")
+        min_area_tip = "仅在导入或粘贴答案图片图层时生效。二值化白底透明后，会一次性删除面积小于该值的黑色连通域，并保存为新的透明 PNG。"
+        self.add_tooltip(min_area_label, min_area_tip)
+        self.add_tooltip(min_area_spin, min_area_tip)
+
         eraser_label = ttk.Label(left, text="橡皮擦半径 px")
         eraser_label.pack(anchor="w", pady=(7, 0))
         self.eraser_radius_var = tk.IntVar(value=self.state.eraser_radius)
@@ -305,13 +313,6 @@ class WritingMachineApp:
         eraser_tip = "在模块2画布左键拖动橡皮擦时生效。数值越大，一次擦除的透明圆形范围越大；会自动保存到项目配置。"
         self.add_tooltip(eraser_label, eraser_tip)
         self.add_tooltip(eraser_spin, eraser_tip)
-        ttk.Label(
-            left,
-            text="以下是手动导入答案图片图层参数（非模块4文本转字迹得到）：",
-            wraplength=230,
-        ).pack(anchor="w", pady=(12, 0))
-        self._add_layer_control(left, "最小连通域", "min_area", 1, 5000, 1)
-
         self.layers_canvas = PreviewCanvas(right, width=880, height=680)
         self.layers_canvas.pack(fill="both", expand=True)
         self.layers_canvas.bind("<Configure>", lambda _event: self.refresh_layers_preview())
@@ -358,6 +359,15 @@ class WritingMachineApp:
             return
         try:
             self.state.answer_import_threshold = max(0, min(255, int(self.layer_import_threshold_var.get())))
+            self.state.save(self.artifacts / "project.json")
+        except (tk.TclError, ValueError):
+            return
+
+    def save_layer_import_min_area_from_ui(self) -> None:
+        if not hasattr(self, "layer_import_min_area_var"):
+            return
+        try:
+            self.state.answer_import_min_area = max(1, int(self.layer_import_min_area_var.get()))
             self.state.save(self.artifacts / "project.json")
         except (tk.TclError, ValueError):
             return
@@ -539,6 +549,8 @@ class WritingMachineApp:
             self.eraser_radius_var.set(self.state.eraser_radius)
         if hasattr(self, "layer_import_threshold_var"):
             self.layer_import_threshold_var.set(self.state.answer_import_threshold)
+        if hasattr(self, "layer_import_min_area_var"):
+            self.layer_import_min_area_var.set(self.state.answer_import_min_area)
         if hasattr(self, "port_var"):
             self.port_var.set(self.state.machine.port)
             self.baud_var.set(self.state.machine.baud)
@@ -555,7 +567,6 @@ class WritingMachineApp:
             self.font_size_var.set(self.state.text_render.font_size)
             self.char_spacing_var.set(self.state.text_render.char_spacing)
             self.text_line_spacing_var.set(self.state.text_render.line_spacing)
-            self.text_min_area_var.set(self.state.text_render.min_area)
             self.font_path_var.set(self.state.text_render.font_path or default_font_path())
             self.perturb_x_sigma_var.set(self.state.text_render.perturb_x_sigma)
             self.perturb_y_sigma_var.set(self.state.text_render.perturb_y_sigma)
@@ -908,7 +919,6 @@ class WritingMachineApp:
         self.font_size_var = tk.IntVar(value=self.state.text_render.font_size)
         self.char_spacing_var = tk.IntVar(value=self.state.text_render.char_spacing)
         self.text_line_spacing_var = tk.IntVar(value=self.state.text_render.line_spacing)
-        self.text_min_area_var = tk.IntVar(value=self.state.text_render.min_area)
         self.font_path_var = tk.StringVar(value=self.state.text_render.font_path or default_font_path())
         self.perturb_x_sigma_var = tk.DoubleVar(value=self.state.text_render.perturb_x_sigma)
         self.perturb_y_sigma_var = tk.DoubleVar(value=self.state.text_render.perturb_y_sigma)
@@ -919,7 +929,6 @@ class WritingMachineApp:
             self.font_size_var,
             self.char_spacing_var,
             self.text_line_spacing_var,
-            self.text_min_area_var,
             self.font_path_var,
             self.perturb_x_sigma_var,
             self.perturb_y_sigma_var,
@@ -932,7 +941,6 @@ class WritingMachineApp:
             "字距 px": "在点击“生成手写图片”时生效。控制同一行相邻字符之间的额外距离，数值越大字越疏。",
             "行距 px": "在点击“生成手写图片”时生效。控制相邻两行之间的额外距离，数值越大行越疏。",
             "行宽 px": "在点击“生成手写图片”时生效。控制自动换行的最大行宽，最终图片宽度会按该值和边距自动生成。",
-            "最小连通域": "仅对模块4生成的字迹图生效，不与模块2的“最小连通域”共用。二值化白底透明后，会删除面积小于该值的黑色连通区域。",
             "扰动 X (sigma)": "字符在水平方向上的随机偏移程度（标准差）。",
             "扰动 Y (sigma)": "字符在垂直方向上的随机偏移程度（标准差）。",
             "扰动 旋转 (sigma)": "字符旋转角度的随机偏移程度（弧度，标准差）。",
@@ -943,7 +951,6 @@ class WritingMachineApp:
             ("字距 px", self.char_spacing_var),
             ("行距 px", self.text_line_spacing_var),
             ("行宽 px", self.text_line_width_var),
-            ("最小连通域", self.text_min_area_var),
             ("扰动 X (sigma)", self.perturb_x_sigma_var),
             ("扰动 Y (sigma)", self.perturb_y_sigma_var),
             ("扰动 旋转 (sigma)", self.perturb_theta_sigma_var),
@@ -1370,7 +1377,6 @@ class WritingMachineApp:
         if not path:
             return
         source_path = path
-        layer_min_area = int(self.layer_vars["min_area"].get()) if "min_area" in self.layer_vars else 5
         if preserve_transparency:
             layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
             layer.already_extracted = True
@@ -1378,13 +1384,14 @@ class WritingMachineApp:
         else:
             image = load_rgba(path)
             threshold = int(self.layer_import_threshold_var.get()) if hasattr(self, "layer_import_threshold_var") else 245
-            processed = prepare_answer_layer_image(image, threshold=threshold)
+            min_area = int(self.layer_import_min_area_var.get()) if hasattr(self, "layer_import_min_area_var") else 5
+            processed = prepare_answer_layer_image(image, threshold=threshold, min_area=min_area)
             stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in Path(path).stem.strip()) or "layer"
             filename = f"imported_layer_{time.strftime('%Y%m%d_%H%M%S')}_{stem}.png"
             source_path = save_png(processed, self.artifacts / filename)
             layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
-            layer.already_extracted = False
-            layer.min_area = layer_min_area
+            layer.already_extracted = True
+            layer.min_area = min_area
         self.push_undo_state()
         self.state.layers.append(layer)
         self.refresh_layer_list()
@@ -2109,7 +2116,6 @@ class WritingMachineApp:
             self.state.text_render.font_size = max(1, int(self.font_size_var.get()))
             self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
             self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
-            self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             self.state.text_render.font_path = self.font_path_var.get()
             self.state.text_render.perturb_x_sigma = float(self.perturb_x_sigma_var.get())
             self.state.text_render.perturb_y_sigma = float(self.perturb_y_sigma_var.get())
@@ -2129,7 +2135,6 @@ class WritingMachineApp:
             self.state.text_render.font_size = max(1, int(self.font_size_var.get()))
             self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
             self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
-            self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             self.state.text_render.font_path = self.font_path_var.get()
             self.state.text_render.perturb_x_sigma = float(self.perturb_x_sigma_var.get())
             self.state.text_render.perturb_y_sigma = float(self.perturb_y_sigma_var.get())
@@ -2145,7 +2150,6 @@ class WritingMachineApp:
                 char_spacing=self.state.text_render.char_spacing,
                 line_spacing=self.state.text_render.line_spacing,
                 line_width=self.state.text_render.line_width,
-                min_area=self.state.text_render.min_area,
                 perturb_x_sigma=self.state.text_render.perturb_x_sigma,
                 perturb_y_sigma=self.state.text_render.perturb_y_sigma,
                 perturb_theta_sigma=self.state.text_render.perturb_theta_sigma,
@@ -2403,6 +2407,8 @@ class WritingMachineApp:
                 self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
             if hasattr(self, "eraser_radius_var"):
                 self.state.eraser_radius = max(1, int(self.eraser_radius_var.get()))
+            if hasattr(self, "layer_import_min_area_var"):
+                self.state.answer_import_min_area = max(1, int(self.layer_import_min_area_var.get()))
             if hasattr(self, "text_line_width_var"):
                 self.state.text_render.line_width = max(1, int(self.text_line_width_var.get()))
             if hasattr(self, "font_size_var"):
@@ -2411,8 +2417,6 @@ class WritingMachineApp:
                 self.state.text_render.char_spacing = max(0, int(self.char_spacing_var.get()))
             if hasattr(self, "text_line_spacing_var"):
                 self.state.text_render.line_spacing = max(0, int(self.text_line_spacing_var.get()))
-            if hasattr(self, "text_min_area_var"):
-                self.state.text_render.min_area = max(1, int(self.text_min_area_var.get()))
             if hasattr(self, "font_path_var"):
                 self.state.text_render.font_path = self.font_path_var.get()
             if hasattr(self, "perturb_x_sigma_var"):
