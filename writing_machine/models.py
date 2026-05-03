@@ -66,47 +66,47 @@ class SerialProxyConfig:
 @dataclass
 class StrokeConfig:
     trace_debug_artifacts: bool = False
-    alpha_threshold: int = 20
+    alpha_threshold: int = 12
     mask_dilation_iterations: int = 0
     mask_erosion_iterations: int = 0
-    mask_morphology_order: str = "dilate_then_erode"
+    mask_morphology_order: str = "erode_then_dilate"
     spur_prune_length: int = 8
     min_component_area: int = 2
     autotrace_centerline: bool = True
     autotrace_background_color: str = ""
     autotrace_color_count: int = 0
     autotrace_corner_always_threshold: float = 60.0
-    autotrace_corner_surround: int = 4
+    autotrace_corner_surround: int = 1
     autotrace_corner_threshold: float = 100.0
-    autotrace_despeckle_level: int = 0
-    autotrace_despeckle_tightness: float = 2.0
+    autotrace_despeckle_level: int = 1
+    autotrace_despeckle_tightness: float = 0.1
     autotrace_dpi: int = 0
-    autotrace_error_threshold: float = 2.0
-    autotrace_filter_iterations: int = 4
-    autotrace_line_reversion_threshold: float = 0.01
+    autotrace_error_threshold: float = 0.2
+    autotrace_filter_iterations: int = 1
+    autotrace_line_reversion_threshold: float = 0.05
     autotrace_line_threshold: float = 1.0
     autotrace_noise_removal: float = 0.99
     autotrace_preserve_width: bool = False
     autotrace_remove_adjacent_corners: bool = False
     autotrace_tangent_surround: int = 3
-    autotrace_width_weight_factor: float = 6.0
+    autotrace_width_weight_factor: float = 10.0
     autotrace_report_progress: bool = False
     autotrace_debug_bitmap: bool = False
-    vpype_linemerge_tolerance_px: float = 1.0
-    forkclean_max_search_length_px: float = 24.0
-    forkclean_min_short_length_px: float = 3.0
-    forkclean_angle_threshold_deg: float = 110.0
-    forkclean_node_tolerance_px: float = 1.0
+    vpype_linemerge_tolerance_px: float = 0.3
+    forkclean_max_search_length_px: float = 30.0
+    forkclean_min_short_length_px: float = 5.0
+    forkclean_angle_threshold_deg: float = 90.0
+    forkclean_node_tolerance_px: float = 0.0
     forkclean_passes: int = 1
-    vpype_linesimplify_tolerance_px: float = 0.3
+    vpype_linesimplify_tolerance_px: float = 0.8
 
 
 @dataclass
 class TextRenderConfig:
-    font_size: int = 84
+    font_size: int = 160
     char_spacing: int = 2
     line_spacing: int = 18
-    line_width: int = 860
+    line_width: int = 1280
     font_path: str = ""
     perturb_x_sigma: float = 1.2
     perturb_y_sigma: float = 1.2
@@ -124,7 +124,7 @@ class ProjectState:
     text_render: TextRenderConfig = field(default_factory=TextRenderConfig)
     rotate_trajectory_180: bool = False
     eraser_radius: int = 18
-    answer_import_threshold: int = 245
+    answer_import_threshold: int = 125
     answer_import_min_area: int = 5
 
     def save(self, path: str | Path) -> None:
