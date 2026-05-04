@@ -5,6 +5,7 @@ from pathlib import Path
 import math
 import queue
 import shutil
+import threading
 import tkinter as tk
 import time
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -169,6 +170,10 @@ class WritingMachineApp:
         self.proxy_runner: SerialProxyRunner | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.proxy_log_queue: queue.Queue[str] = queue.Queue()
+        self.layer_task_queue: queue.Queue[tuple] = queue.Queue()
+        self.stroke_task_queue: queue.Queue[tuple] = queue.Queue()
+        self.layer_import_running = False
+        self.stroke_generation_running = False
         self._erase_points: list[tuple[float, float]] = []
         self.undo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
         self.redo_stack: list[tuple[ProjectState, list[Stroke], list[str], int | None]] = []
@@ -261,7 +266,8 @@ class WritingMachineApp:
         right = ttk.Frame(tab)
         right.pack(side="right", fill="both", expand=True, padx=8, pady=8)
 
-        ttk.Button(left, text="导入答案图片图层", command=self.add_answer_layer).pack(fill="x", pady=3)
+        self.add_layer_button = ttk.Button(left, text="导入答案图片图层", command=self.add_answer_layer)
+        self.add_layer_button.pack(fill="x", pady=3)
         ttk.Button(left, text="删除当前图层", command=self.delete_current_layer).pack(fill="x", pady=3)
 
         self.layer_list = tk.Listbox(left, height=7, exportselection=False)
@@ -319,6 +325,17 @@ class WritingMachineApp:
         eraser_tip = "在模块2画布左键拖动橡皮擦时生效。数值越大，一次擦除的透明圆形范围越大；会自动保存到项目配置。"
         self.add_tooltip(eraser_label, eraser_tip)
         self.add_tooltip(eraser_spin, eraser_tip)
+        layer_progress_outer = ttk.Frame(left)
+        layer_progress_outer.pack(side="bottom", fill="both", expand=True, pady=(8, 0))
+        ttk.Label(layer_progress_outer, text="字迹定位输出").pack(anchor="w")
+        layer_progress_frame = ttk.Frame(layer_progress_outer)
+        layer_progress_frame.pack(fill="both", expand=True, pady=(4, 0))
+        self.layer_progress_text = tk.Text(layer_progress_frame, height=8, width=34, wrap="word", state="disabled")
+        layer_progress_scroll = ttk.Scrollbar(layer_progress_frame, orient="vertical", command=self.layer_progress_text.yview)
+        self.layer_progress_text.configure(yscrollcommand=layer_progress_scroll.set)
+        self.layer_progress_text.pack(side="left", fill="both", expand=True)
+        layer_progress_scroll.pack(side="right", fill="y")
+
         self.layers_canvas = PreviewCanvas(right, width=880, height=680)
         self.layers_canvas.pack(fill="both", expand=True)
         self.layers_canvas.bind("<Configure>", lambda _event: self.refresh_layers_preview())
@@ -471,6 +488,22 @@ class WritingMachineApp:
         except (tk.TclError, ValueError):
             return
 
+    def clear_layer_progress(self) -> None:
+        if not hasattr(self, "layer_progress_text"):
+            return
+        self.layer_progress_text.configure(state="normal")
+        self.layer_progress_text.delete("1.0", tk.END)
+        self.layer_progress_text.configure(state="disabled")
+
+    def append_layer_progress(self, message: str) -> None:
+        if not hasattr(self, "layer_progress_text"):
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self.layer_progress_text.configure(state="normal")
+        self.layer_progress_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.layer_progress_text.see(tk.END)
+        self.layer_progress_text.configure(state="disabled")
+
     def clear_stroke_progress(self) -> None:
         if not hasattr(self, "stroke_progress_text"):
             return
@@ -486,7 +519,6 @@ class WritingMachineApp:
         self.stroke_progress_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.stroke_progress_text.see(tk.END)
         self.stroke_progress_text.configure(state="disabled")
-        self.root.update_idletasks()
 
     def make_undo_snapshot(self) -> tuple[ProjectState, list[Stroke], list[str], int | None]:
         return (
@@ -898,7 +930,8 @@ class WritingMachineApp:
             "在轨迹预览、G-code 生成和执行时生效。用于纸张实际旋转180度、机器从对角原点书写的场景，会同步旋转预览并镜像输出坐标。",
         )
         ttk.Button(left, text="预览轨迹输入图", command=self.preview_rotated_handwriting).pack(fill="x", pady=3)
-        ttk.Button(left, text="按图层生成轨迹", command=self.generate_stroke_paths).pack(fill="x", pady=8)
+        self.generate_strokes_button = ttk.Button(left, text="按图层生成轨迹", command=self.generate_stroke_paths)
+        self.generate_strokes_button.pack(fill="x", pady=8)
         ttk.Button(left, text="加载 自定义轨迹strokes.json", command=self.load_strokes_json).pack(fill="x", pady=3)
         ttk.Button(left, text="由轨迹生成 G-code", command=self.export_gcode).pack(fill="x", pady=3)
         self.stroke_info_var = tk.StringVar(value="尚未生成轨迹")
@@ -1390,6 +1423,36 @@ class WritingMachineApp:
             return 1.0
         return max(0.05, min(max_width / max(1, image.width), max_height / max(1, image.height)))
 
+    def set_layer_import_running(self, running: bool) -> None:
+        self.layer_import_running = running
+        if hasattr(self, "add_layer_button"):
+            self.add_layer_button.configure(state="disabled" if running else "normal")
+
+    def import_answer_layer_worker(
+        self,
+        path: str,
+        ref: ReferenceCanvas,
+        threshold: int,
+        min_area: int,
+    ) -> None:
+        try:
+            self.layer_task_queue.put(("progress", f"开始导入答案图层：{path}"))
+            image = load_rgba(path)
+            self.layer_task_queue.put(("progress", f"已读取图片：{image.width} x {image.height}px,正在进一步处理..."))
+            processed = prepare_answer_layer_image(image, threshold=threshold, min_area=min_area)
+            self.layer_task_queue.put(("progress", f"已二值化、去噪并裁边：{processed.width} x {processed.height}px"))
+            stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in Path(path).stem.strip()) or "layer"
+            filename = f"imported_layer_{time.strftime('%Y%m%d_%H%M%S')}_{stem}.png"
+            source_path = save_png(processed, self.artifacts / filename)
+            scale = self.initial_import_scale(processed, ref)
+            layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+            layer.scale = scale
+            layer.already_extracted = True
+            layer.min_area = min_area
+            self.layer_task_queue.put(("done", layer, f"导入完成：{Path(source_path).name}，初始缩放 {scale:.3f}x"))
+        except Exception as exc:
+            self.layer_task_queue.put(("error", str(exc)))
+
     def add_answer_layer(self, path: str | None = None, preserve_transparency: bool = False) -> None:
         ref = self.require_reference()
         if ref is None:
@@ -1402,25 +1465,31 @@ class WritingMachineApp:
             layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
             layer.already_extracted = True
             layer.min_area = 1
-        else:
-            image = load_rgba(path)
+            self.push_undo_state()
+            self.state.layers.append(layer)
+            self.refresh_layer_list()
+            self.layer_list.selection_clear(0, tk.END)
+            self.layer_list.selection_set(len(self.state.layers) - 1)
+            self.load_layer_to_controls()
+            self.refresh_layers_preview()
+            return
+        if self.layer_import_running:
+            self.append_layer_progress("已有答案图层正在导入，请等待完成后再导入下一张。")
+            return
+        try:
             threshold = int(self.layer_import_threshold_var.get()) if hasattr(self, "layer_import_threshold_var") else 245
             min_area = int(self.layer_import_min_area_var.get()) if hasattr(self, "layer_import_min_area_var") else 5
-            processed = prepare_answer_layer_image(image, threshold=threshold, min_area=min_area)
-            stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in Path(path).stem.strip()) or "layer"
-            filename = f"imported_layer_{time.strftime('%Y%m%d_%H%M%S')}_{stem}.png"
-            source_path = save_png(processed, self.artifacts / filename)
-            layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
-            layer.scale = self.initial_import_scale(processed, ref)
-            layer.already_extracted = True
-            layer.min_area = min_area
-        self.push_undo_state()
-        self.state.layers.append(layer)
-        self.refresh_layer_list()
-        self.layer_list.selection_clear(0, tk.END)
-        self.layer_list.selection_set(len(self.state.layers) - 1)
-        self.load_layer_to_controls()
-        self.refresh_layers_preview()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("导入失败", f"导入参数无效：{exc}")
+            return
+        self.clear_layer_progress()
+        self.set_layer_import_running(True)
+        thread = threading.Thread(
+            target=self.import_answer_layer_worker,
+            args=(path, copy.deepcopy(ref), threshold, min_area),
+            daemon=True,
+        )
+        thread.start()
 
     def refresh_layer_list(self) -> None:
         self.layer_list.delete(0, tk.END)
@@ -2056,9 +2125,96 @@ class WritingMachineApp:
             transformed.append(Stroke(points=points, closed=stroke.closed))
         return transformed
 
+    def set_stroke_generation_running(self, running: bool) -> None:
+        self.stroke_generation_running = running
+        if hasattr(self, "generate_strokes_button"):
+            self.generate_strokes_button.configure(state="disabled" if running else "normal")
+
+    def generate_stroke_paths_worker(
+        self,
+        ref: ReferenceCanvas,
+        layers: list[AnswerLayer],
+        stroke_config,
+    ) -> None:
+        def progress(message: str) -> None:
+            self.stroke_task_queue.put(("progress", message))
+
+        try:
+            merged_strokes: list[Stroke] = []
+            trace_layers_dir = self.artifacts / "trace_layers"
+            trace_layers_dir.mkdir(parents=True, exist_ok=True)
+            for layer_index, layer in enumerate(layers, start=1):
+                image, _crop_box = self.current_layer_source_image(layer)
+                progress(f"图层 {layer_index}：正在读取 source_path：{layer.source_path}")
+                layer_strokes = generate_strokes(
+                    image,
+                    alpha_threshold=stroke_config.alpha_threshold,
+                    mask_dilation_iterations=stroke_config.mask_dilation_iterations,
+                    mask_erosion_iterations=stroke_config.mask_erosion_iterations,
+                    mask_morphology_order=stroke_config.mask_morphology_order,
+                    min_component_area=stroke_config.min_component_area,
+                    trace_debug_artifacts=stroke_config.trace_debug_artifacts,
+                    autotrace_centerline=stroke_config.autotrace_centerline,
+                    autotrace_background_color=stroke_config.autotrace_background_color,
+                    autotrace_color_count=stroke_config.autotrace_color_count,
+                    autotrace_corner_always_threshold=stroke_config.autotrace_corner_always_threshold,
+                    autotrace_corner_surround=stroke_config.autotrace_corner_surround,
+                    autotrace_corner_threshold=stroke_config.autotrace_corner_threshold,
+                    autotrace_despeckle_level=stroke_config.autotrace_despeckle_level,
+                    autotrace_despeckle_tightness=stroke_config.autotrace_despeckle_tightness,
+                    autotrace_dpi=stroke_config.autotrace_dpi,
+                    autotrace_error_threshold=stroke_config.autotrace_error_threshold,
+                    autotrace_filter_iterations=stroke_config.autotrace_filter_iterations,
+                    autotrace_line_reversion_threshold=stroke_config.autotrace_line_reversion_threshold,
+                    autotrace_line_threshold=stroke_config.autotrace_line_threshold,
+                    autotrace_noise_removal=stroke_config.autotrace_noise_removal,
+                    autotrace_preserve_width=stroke_config.autotrace_preserve_width,
+                    autotrace_remove_adjacent_corners=stroke_config.autotrace_remove_adjacent_corners,
+                    autotrace_tangent_surround=stroke_config.autotrace_tangent_surround,
+                    autotrace_width_weight_factor=stroke_config.autotrace_width_weight_factor,
+                    autotrace_report_progress=stroke_config.autotrace_report_progress,
+                    autotrace_debug_bitmap=stroke_config.autotrace_debug_bitmap,
+                    vpype_linemerge_tolerance_px=stroke_config.vpype_linemerge_tolerance_px,
+                    forkclean_enabled=stroke_config.forkclean_enabled,
+                    forkclean_max_search_length_px=stroke_config.forkclean_max_search_length_px,
+                    forkclean_min_short_length_px=stroke_config.forkclean_min_short_length_px,
+                    forkclean_angle_threshold_deg=stroke_config.forkclean_angle_threshold_deg,
+                    forkclean_node_tolerance_px=stroke_config.forkclean_node_tolerance_px,
+                    forkclean_passes=stroke_config.forkclean_passes,
+                    vpype_linesimplify_tolerance_px=stroke_config.vpype_linesimplify_tolerance_px,
+                    sort_paths=False,
+                    work_dir=trace_layers_dir / f"layer_{layer_index:03d}",
+                    progress_callback=lambda message, index=layer_index: progress(f"图层 {index}：{message}"),
+                )
+                transformed = self.transform_layer_strokes(layer, layer_strokes, image.size)
+                merged_strokes.extend(transformed)
+                progress(f"图层 {layer_index}：已生成并变换 {len(transformed)} 条 stroke。")
+
+            if not merged_strokes:
+                self.stroke_task_queue.put(("empty", "没有生成任何轨迹，流程已停止。"))
+                return
+            merged_svg = self.artifacts / "trace_merged_unsorted.svg"
+            sorted_svg = self.artifacts / "trace_optimized.svg"
+            progress("正在合并所有图层 SVG，尚未 linesort...")
+            save_strokes_svg(merged_strokes, ref.width_px, ref.height_px, merged_svg)
+            sort_svg_paths(merged_svg, sorted_svg, progress_callback=progress)
+            progress("正在解析 linesort 后的 SVG 折线为轨迹点...")
+            strokes = svg_to_strokes(sorted_svg)
+            progress("正在保存 strokes.json...")
+            save_strokes(strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
+            points = sum(len(stroke.points) for stroke in strokes)
+            self.stroke_task_queue.put(
+                ("done", strokes, points, f"轨迹生成完成：{len(strokes)} 条 stroke，共 {points} 个点。")
+            )
+        except Exception as exc:
+            self.stroke_task_queue.put(("error", str(exc)))
+
     def generate_stroke_paths(self) -> None:
         ref = self.require_reference()
         if ref is None:
+            return
+        if self.stroke_generation_running:
+            self.append_stroke_progress("轨迹正在生成中，请等待当前任务完成。")
             return
         self.clear_stroke_progress()
         enabled_layers = [layer for layer in self.state.layers if layer.enabled]
@@ -2109,79 +2265,17 @@ class WritingMachineApp:
             self.state.stroke.forkclean_node_tolerance_px = float(self.forkclean_node_tolerance_var.get())
             self.state.stroke.forkclean_passes = int(self.forkclean_passes_var.get())
             self.state.stroke.vpype_linesimplify_tolerance_px = float(self.vpype_linesimplify_tolerance_var.get())
-
-            merged_strokes: list[Stroke] = []
-            trace_layers_dir = self.artifacts / "trace_layers"
-            trace_layers_dir.mkdir(parents=True, exist_ok=True)
-            for layer_index, layer in enumerate(enabled_layers, start=1):
-                image, _crop_box = self.current_layer_source_image(layer)
-                self.append_stroke_progress(f"图层 {layer_index}：正在读取 source_path：{layer.source_path}")
-                layer_strokes = generate_strokes(
-                    image,
-                    alpha_threshold=self.state.stroke.alpha_threshold,
-                    mask_dilation_iterations=self.state.stroke.mask_dilation_iterations,
-                    mask_erosion_iterations=self.state.stroke.mask_erosion_iterations,
-                    mask_morphology_order=self.state.stroke.mask_morphology_order,
-                    min_component_area=self.state.stroke.min_component_area,
-                    trace_debug_artifacts=self.state.stroke.trace_debug_artifacts,
-                    autotrace_centerline=self.state.stroke.autotrace_centerline,
-                    autotrace_background_color=self.state.stroke.autotrace_background_color,
-                    autotrace_color_count=self.state.stroke.autotrace_color_count,
-                    autotrace_corner_always_threshold=self.state.stroke.autotrace_corner_always_threshold,
-                    autotrace_corner_surround=self.state.stroke.autotrace_corner_surround,
-                    autotrace_corner_threshold=self.state.stroke.autotrace_corner_threshold,
-                    autotrace_despeckle_level=self.state.stroke.autotrace_despeckle_level,
-                    autotrace_despeckle_tightness=self.state.stroke.autotrace_despeckle_tightness,
-                    autotrace_dpi=self.state.stroke.autotrace_dpi,
-                    autotrace_error_threshold=self.state.stroke.autotrace_error_threshold,
-                    autotrace_filter_iterations=self.state.stroke.autotrace_filter_iterations,
-                    autotrace_line_reversion_threshold=self.state.stroke.autotrace_line_reversion_threshold,
-                    autotrace_line_threshold=self.state.stroke.autotrace_line_threshold,
-                    autotrace_noise_removal=self.state.stroke.autotrace_noise_removal,
-                    autotrace_preserve_width=self.state.stroke.autotrace_preserve_width,
-                    autotrace_remove_adjacent_corners=self.state.stroke.autotrace_remove_adjacent_corners,
-                    autotrace_tangent_surround=self.state.stroke.autotrace_tangent_surround,
-                    autotrace_width_weight_factor=self.state.stroke.autotrace_width_weight_factor,
-                    autotrace_report_progress=self.state.stroke.autotrace_report_progress,
-                    autotrace_debug_bitmap=self.state.stroke.autotrace_debug_bitmap,
-                    vpype_linemerge_tolerance_px=self.state.stroke.vpype_linemerge_tolerance_px,
-                    forkclean_enabled=self.state.stroke.forkclean_enabled,
-                    forkclean_max_search_length_px=self.state.stroke.forkclean_max_search_length_px,
-                    forkclean_min_short_length_px=self.state.stroke.forkclean_min_short_length_px,
-                    forkclean_angle_threshold_deg=self.state.stroke.forkclean_angle_threshold_deg,
-                    forkclean_node_tolerance_px=self.state.stroke.forkclean_node_tolerance_px,
-                    forkclean_passes=self.state.stroke.forkclean_passes,
-                    vpype_linesimplify_tolerance_px=self.state.stroke.vpype_linesimplify_tolerance_px,
-                    sort_paths=False,
-                    work_dir=trace_layers_dir / f"layer_{layer_index:03d}",
-                    progress_callback=lambda message, index=layer_index: self.append_stroke_progress(
-                        f"图层 {index}：{message}"
-                    ),
-                )
-                transformed = self.transform_layer_strokes(layer, layer_strokes, image.size)
-                merged_strokes.extend(transformed)
-                self.append_stroke_progress(f"图层 {layer_index}：已生成并变换 {len(transformed)} 条 stroke。")
-
-            if not merged_strokes:
-                self.append_stroke_progress("没有生成任何轨迹，流程已停止。")
-                return
-            merged_svg = self.artifacts / "trace_merged_unsorted.svg"
-            sorted_svg = self.artifacts / "trace_optimized.svg"
-            self.append_stroke_progress("正在合并所有图层 SVG，尚未 linesort...")
-            save_strokes_svg(merged_strokes, ref.width_px, ref.height_px, merged_svg)
-            sort_svg_paths(merged_svg, sorted_svg, progress_callback=self.append_stroke_progress)
-            self.append_stroke_progress("正在解析 linesort 后的 SVG 折线为轨迹点...")
-            self.strokes = svg_to_strokes(sorted_svg)
-            self.append_stroke_progress("正在保存 strokes.json...")
-            save_strokes(self.strokes, ref.width_px, ref.height_px, self.artifacts / "strokes.json")
             self.state.save(self.artifacts / "project.json")
-            points = sum(len(stroke.points) for stroke in self.strokes)
-            self.stroke_info_var.set(f"已生成 {len(self.strokes)} 条 stroke，共 {points} 个点。")
-            self.draw_strokes_preview()
-            self.append_stroke_progress(f"轨迹生成完成：{len(self.strokes)} 条 stroke，共 {points} 个点。")
-            messagebox.showinfo("完成", "轨迹已保存到 artifacts/strokes.json")
+            self.set_stroke_generation_running(True)
+            thread = threading.Thread(
+                target=self.generate_stroke_paths_worker,
+                args=(copy.deepcopy(ref), copy.deepcopy(enabled_layers), copy.deepcopy(self.state.stroke)),
+                daemon=True,
+            )
+            thread.start()
         except Exception as exc:
             self.append_stroke_progress(f"轨迹生成失败：{exc}")
+            self.set_stroke_generation_running(False)
             messagebox.showerror("轨迹生成失败", str(exc))
 
     def preview_rotated_handwriting(self) -> None:
@@ -2472,7 +2566,60 @@ class WritingMachineApp:
                     self.proxy_status_var.set("串口代理已停止" if message.startswith("完成：") else "串口代理失败")
         except queue.Empty:
             pass
+        self._poll_layer_task_queue()
+        self._poll_stroke_task_queue()
         self.root.after(100, self._poll_log_queue)
+
+    def _poll_layer_task_queue(self) -> None:
+        try:
+            while True:
+                item = self.layer_task_queue.get_nowait()
+                kind = item[0]
+                if kind == "progress":
+                    self.append_layer_progress(item[1])
+                elif kind == "done":
+                    _kind, layer, message = item
+                    self.push_undo_state()
+                    self.state.layers.append(layer)
+                    self.state.save(self.artifacts / "project.json")
+                    self.refresh_layer_list()
+                    self.layer_list.selection_clear(0, tk.END)
+                    self.layer_list.selection_set(len(self.state.layers) - 1)
+                    self.load_layer_to_controls()
+                    self.refresh_layers_preview()
+                    self.append_layer_progress(message)
+                    self.set_layer_import_running(False)
+                elif kind == "error":
+                    self.append_layer_progress(f"导入失败：{item[1]}")
+                    self.set_layer_import_running(False)
+                    messagebox.showerror("导入失败", item[1])
+        except queue.Empty:
+            pass
+
+    def _poll_stroke_task_queue(self) -> None:
+        try:
+            while True:
+                item = self.stroke_task_queue.get_nowait()
+                kind = item[0]
+                if kind == "progress":
+                    self.append_stroke_progress(item[1])
+                elif kind == "done":
+                    _kind, strokes, points, message = item
+                    self.strokes = strokes
+                    self.stroke_info_var.set(f"已生成 {len(self.strokes)} 条 stroke，共 {points} 个点。")
+                    self.draw_strokes_preview()
+                    self.append_stroke_progress(message)
+                    self.set_stroke_generation_running(False)
+                    messagebox.showinfo("完成", "轨迹已保存到 artifacts/strokes.json")
+                elif kind == "empty":
+                    self.append_stroke_progress(item[1])
+                    self.set_stroke_generation_running(False)
+                elif kind == "error":
+                    self.append_stroke_progress(f"轨迹生成失败：{item[1]}")
+                    self.set_stroke_generation_running(False)
+                    messagebox.showerror("轨迹生成失败", item[1])
+        except queue.Empty:
+            pass
 
     def on_close(self) -> None:
         try:

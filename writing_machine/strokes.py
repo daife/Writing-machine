@@ -205,7 +205,6 @@ def _run_vpype_inprocess(
 ) -> None:
     stdout = StringIO()
     stderr = StringIO()
-    old_cwd = Path.cwd()
     started_at = time.monotonic()
     try:
         import vpype_cli
@@ -213,7 +212,6 @@ def _run_vpype_inprocess(
         _register_vpype_forkclean_plugin(vpype_cli)
         if running_message:
             _notify_progress(progress_callback, f"{running_message}，已运行 0.0 秒...")
-        os.chdir(cwd)
         with redirect_stdout(stdout), redirect_stderr(stderr):
             vpype_cli.cli.main(args=args[1:], standalone_mode=False)
         if finished_message:
@@ -233,8 +231,6 @@ def _run_vpype_inprocess(
         if details:
             message += f"\n{details[-1600:]}"
         raise TraceToolError(message) from exc
-    finally:
-        os.chdir(old_cwd)
 
 
 def _run_trace_command(
