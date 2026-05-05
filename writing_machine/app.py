@@ -1463,6 +1463,7 @@ class WritingMachineApp:
         source_path = path
         if preserve_transparency:
             layer = AnswerLayer(source_path=source_path, x=ref.width_px * 0.05, y=ref.height_px * 0.05)
+            layer.scale = self.initial_import_scale(load_rgba(source_path), ref)
             layer.already_extracted = True
             layer.min_area = 1
             self.push_undo_state()
