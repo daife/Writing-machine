@@ -283,7 +283,7 @@ class WritingMachineApp:
                 "左键未选中图层：选择图层\n"
                 "右键按住图框内部：平移\n"
                 "左键按住图框内部：橡皮擦\n"
-                "左键按住顶部圆形标识：旋转（尽量不要旋转，可能破坏图像结构）\n"
+                "左键按住顶部圆形标识：旋转\n"
                 "左键按住右下蓝色方块：缩放\n"
                 "左键按住红色角点：裁切"
             ),
@@ -1592,11 +1592,49 @@ class WritingMachineApp:
         index = self.current_layer_index()
         if index is None:
             return
+        if abs(layer.rotation_deg) > 0.001:
+            self.bake_current_layer_rotation(layer)
+            return
         rendered = render_layer(layer)
         target = self.artifacts / f"baked_layer_{index + 1}_{int(time.time() * 1000)}.png"
         rendered.save(target)
         layer.source_path = str(target)
         layer.scale = 1.0
+        layer.rotation_deg = 0.0
+        layer.crop_left = 0
+        layer.crop_top = 0
+        layer.crop_right = 0
+        layer.crop_bottom = 0
+        layer.already_extracted = True
+
+    def bake_current_layer_rotation(self, layer: AnswerLayer) -> None:
+        index = self.current_layer_index()
+        if index is None or abs(layer.rotation_deg) <= 0.001:
+            return
+        rendered = render_layer(layer)
+        rendered_bbox = rendered.getchannel("A").getbbox()
+        source, _crop_box = self.current_layer_source_image(layer)
+        side = max(1, source.width + source.height)
+        padded = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+        paste_x = (side - source.width) // 2
+        paste_y = (side - source.height) // 2
+        padded.alpha_composite(source, (paste_x, paste_y))
+        rotated = padded.rotate(
+            -float(layer.rotation_deg),
+            expand=False,
+            resample=Image.Resampling.BICUBIC,
+        )
+        alpha_bbox = rotated.getchannel("A").getbbox()
+        if alpha_bbox:
+            rotated = rotated.crop(alpha_bbox)
+        else:
+            rotated = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+        target = self.artifacts / f"rotated_layer_{index + 1}_{int(time.time() * 1000)}.png"
+        rotated.save(target)
+        if rendered_bbox:
+            layer.x += float(rendered_bbox[0])
+            layer.y += float(rendered_bbox[1])
+        layer.source_path = str(target)
         layer.rotation_deg = 0.0
         layer.crop_left = 0
         layer.crop_top = 0
@@ -1925,8 +1963,12 @@ class WritingMachineApp:
 
     def on_layer_mouse_up(self, _event) -> None:
         if self._layer_mouse_start is not None:
-            if self._layer_mouse_start.get("mode") == "erase":
+            mode = self._layer_mouse_start.get("mode")
+            layer = self.current_layer()
+            if mode == "erase":
                 self.commit_layer_erase()
+            elif mode == "rotate" and layer is not None:
+                self.bake_current_layer_rotation(layer)
             self.state.save(self.artifacts / "project.json")
         self._layer_mouse_start = None
         self._erase_points = []
