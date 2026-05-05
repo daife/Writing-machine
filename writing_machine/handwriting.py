@@ -49,6 +49,16 @@ def render_text(
     scratch_draw = ImageDraw.Draw(scratch)
     max_line_width = max(1, int(line_width))
     char_gap = max(0, int(char_spacing))
+    text_chars = [char for paragraph in (text.splitlines() or [""]) for char in paragraph]
+    metric_chars = text_chars + list("一,，。、“”Mg")
+    metric_boxes = [scratch_draw.textbbox((0, 0), char, font=font) for char in metric_chars]
+    line_top = min(0, *(bbox[1] for bbox in metric_boxes))
+    line_bottom = max(font_size, *(bbox[3] for bbox in metric_boxes))
+    try:
+        ascent, descent = font.getmetrics()
+        line_height = max(line_bottom - line_top, ascent + descent, font_size)
+    except Exception:
+        line_height = max(line_bottom - line_top, font_size)
     lines: list[list[str]] = []
     for paragraph in text.splitlines() or [""]:
         current: list[str] = []
@@ -67,7 +77,7 @@ def render_text(
         lines.append(current)
 
     bottom_margin = top_margin
-    line_step = max(1, int(font_size + line_spacing))
+    line_step = max(1, int(line_height + line_spacing))
     width = left_margin + max_line_width + left_margin
     height = top_margin + max(1, len(lines)) * line_step - max(0, int(line_spacing)) + bottom_margin
     image = Image.new("RGBA", (width, max(1, height)), (255, 255, 255, 0))
@@ -80,14 +90,19 @@ def render_text(
             jitter_y = random.gauss(0, perturb_y_sigma)
             bbox = draw.textbbox((0, 0), char, font=font)
             char_width = max(1, bbox[2] - bbox[0])
-            char_height = max(1, bbox[3] - bbox[1])
-            char_image = Image.new("RGBA", (char_width + 8, char_height + 8), (255, 255, 255, 0))
+            pad = 8
+            char_image = Image.new("RGBA", (char_width + pad * 2, int(line_height) + pad * 2), (255, 255, 255, 0))
             char_draw = ImageDraw.Draw(char_image)
-            char_draw.text((4 - bbox[0], 4 - bbox[1]), char, font=font, fill=(0, 0, 0, 255))
+            char_draw.text((pad - bbox[0], pad - line_top), char, font=font, fill=(0, 0, 0, 255))
+            paste_x = x + jitter_x - pad
+            paste_y = y + jitter_y + line_top - pad
             theta = random.gauss(0, perturb_theta_sigma)
             if abs(theta) > 0.001:
+                original_size = char_image.size
                 char_image = char_image.rotate(theta * 180 / 3.141592653589793, expand=True, resample=Image.Resampling.BICUBIC)
-            image.alpha_composite(char_image, (int(round(x + jitter_x)), int(round(y + jitter_y))))
+                paste_x -= (char_image.width - original_size[0]) / 2
+                paste_y -= (char_image.height - original_size[1]) / 2
+            image.alpha_composite(char_image, (int(round(paste_x)), int(round(paste_y))))
             x += char_width + char_gap
         y += line_step
     image.save(target)
